@@ -144,10 +144,13 @@ void testVisit() {
       theSecond{szLogVar::in_place_index_t<2>{}, 2},
       theThird{szLogVar::in_place_index_t<3>{}, 3};
 
-  szLogVar::visit(
-      [](auto &&...args) { ((std::cout << args << ' '), ...) << '\n'; },
-      theFirst, theSecond, theThird);
-  std::cout << "End testVisit()\n";
+  
+  std::cout << szLogVar::visit(
+      [](auto &&...args) { 
+        ((std::cout << args << ' '), ...) << '\n'; 
+        return (args + ...);
+      },
+      theFirst, theSecond, theThird) << " End testVisit()\n";
 }
 
 struct testCopyAssign {

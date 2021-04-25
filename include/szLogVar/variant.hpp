@@ -8,6 +8,8 @@
 #include <new>              //placement new
 #include <type_traits>      //need lots of traits
 
+//#include <iostream> //Debugging
+
 #ifdef __has_builtin
 #if defined(__clang__) && __has_builtin(__type_pack_element)
 #define SZ_VAR_HASTYPEPACKELEM
@@ -111,10 +113,10 @@ template <class T> constexpr void destroyCurrent(const T &param) {
 #endif
 } // namespace szHelpMethods
 
-#if !(defined(_MSC_VER) || __GNUC__ >= 8)
+
 namespace otherIdxSeq { // Inspired by https://stackoverflow.com/a/32223343
 template <std::size_t... Nums> struct index_sequence;
-
+#if !(defined(_MSC_VER) || __GNUC__ >= 8)
 template <std::size_t... I1, std::size_t... I2>
 index_sequence<I1..., (sizeof...(I1) + I2)...> *
 myMergeRenumber(index_sequence<I1...> *, index_sequence<I2...> *);
@@ -131,8 +133,9 @@ decltype(myMergeRenumber(
     myMakeIdxSeq(static_cast<hasInt<N - N / 2> *>(0),
                  static_cast<hasInt<((N - N / 2) > 1)> *>(0))))
 myMakeIdxSeq(hasInt<N> *, hasInt<1> *);
-} // namespace otherIdxSeq
 #endif
+} // namespace otherIdxSeq
+
 
 namespace variantImpl {
 #if defined(_MSC_VER) || __GNUC__ >= 8
@@ -163,8 +166,12 @@ template <std::size_t... Idx>
 using mySeqOfNum =
 #if defined(_MSC_VER) || __GNUC__ >= 8
     hasNum<std::size_t, Idx...>;
+    #define SZ_VAR_VISITTEMPLATEPARAM template<class, std::size_t...>
+    #define SZ_VAR_VISITSPECPARAM T<std::size_t,Ns...>*
 #else
     otherIdxSeq::index_sequence<Idx...> *;
+    #define SZ_VAR_VISITTEMPLATEPARAM template<std::size_t...>
+    #define SZ_VAR_VISITSPECPARAM T<Ns...>*
 #endif
 
 constexpr bool
@@ -1394,51 +1401,48 @@ constexpr decltype(auto) invoke(F &&f, Args &&...args) {
 }
 
 // https://en.wikipedia.org/wiki/Binary_search_algorithm#Alternative_procedure
-template <std::size_t whichVariantIdx, // Getting the index of the
-                                       // whichVariantIdx'th variant
-          std::size_t LowerBound,
-          std::size_t... Indices, // for get_unchecked
-          std::size_t... Ns,      // 0,1,2... [0,sizeof...(vs))
-          class F,                // Visitor
-          typename... Vs>         // The variants
-constexpr auto visitOneIfCheck(variantImpl::mySeqOfNum<Indices...>,
-                               variantImpl::mySeqOfNum<Ns...>,
-                               std::size_t const *theIdxPtr, F &&f, Vs &&...vs)
-    -> decltype(invoke(static_cast<F &&>(f),
-                       szLogVar::get_unchecked<0>(static_cast<Vs &&>(vs))...)) {
-  constexpr std::size_t theUpperBound =
-      szHelpMethods::expander<std::size_t>{Indices...}[whichVariantIdx];
-  if constexpr (LowerBound == theUpperBound) {
-    if constexpr (whichVariantIdx == (sizeof...(vs) - 1)) {
-      return invoke(static_cast<F &&>(f),
-                    szLogVar::get_unchecked<(Ns == whichVariantIdx ? LowerBound
-                                                                   : Indices)>(
-                        static_cast<Vs &&>(vs))...);
-    } else {
-      return visitOneIfCheck<whichVariantIdx + 1, 0>(
-          variantImpl::mySeqOfNum<(Ns == whichVariantIdx ? LowerBound
-                                                         : Indices)...>{},
-          variantImpl::mySeqOfNum<Ns...>{}, ++theIdxPtr, static_cast<F &&>(f),
-          static_cast<Vs &&>(vs)...);
-    }
-  } else {
-    constexpr std::size_t ceiling = ((LowerBound + theUpperBound) / 2) +
+  template<std::size_t I, class T> struct containsReference{
+      T theRef;
+      constexpr containsReference(T&& param) : theRef{static_cast<T&&>(param)}{}
+  };
+
+  template<class...> struct simpleTupleReferences;
+
+  template<class F, std::size_t... Ns, class... Ts> 
+  struct simpleTupleReferences<F, variantImpl::mySeqOfNum<Ns...>, Ts...> : containsReference<Ns,Ts>...{
+    std::size_t const *theIdxPtr;
+    F theF;
+
+    template<class F_Arg,class... Args>
+    constexpr simpleTupleReferences(std::size_t const * ptrParam, F_Arg&& paramF, Args&&... args) : 
+    containsReference<Ns,Ts>{static_cast<Args&&>(args)}...,theIdxPtr{ptrParam}, theF{static_cast<F_Arg&&>(paramF)} {}
+
+    template<std::size_t whichVariantIdx, std::size_t LowerBound, std::size_t... Indices> 
+    constexpr decltype(invoke(static_cast<F&&>(theF), szLogVar::get_unchecked<0>(szHelpMethods::myDeclval<Ts>(0))...)) visitImpl(){
+      constexpr std::size_t theUpperBound = szHelpMethods::expander<std::size_t>{Indices...}[whichVariantIdx];
+      
+      if constexpr(LowerBound == theUpperBound){
+        if constexpr(whichVariantIdx == (sizeof...(Ts) - 1)){
+          return invoke(static_cast<F&&>(theF), szLogVar::get_unchecked<Indices>( static_cast<Ts&&>(static_cast<containsReference<Ns,Ts>&>(*this).theRef ) )... );
+        } else{
+          ++theIdxPtr;
+          return visitImpl<whichVariantIdx + 1, 0, (Ns == whichVariantIdx ? LowerBound
+                                                         : Indices)...>();
+        }
+      } else {
+        constexpr std::size_t ceiling = ((LowerBound + theUpperBound) / 2) +
                                     ((LowerBound & 1) ^ (theUpperBound & 1));
-    if (ceiling > *theIdxPtr) {
-      return visitOneIfCheck<whichVariantIdx, LowerBound>(
-          variantImpl::mySeqOfNum<(Ns == whichVariantIdx ? ceiling - 1
-                                                         : Indices)...>{},
-          variantImpl::mySeqOfNum<Ns...>{}, theIdxPtr, static_cast<F &&>(f),
-          static_cast<Vs &&>(vs)...);
-    } else {
-      return visitOneIfCheck<whichVariantIdx, ceiling>(
-          variantImpl::mySeqOfNum<(Ns == whichVariantIdx ? theUpperBound
-                                                         : Indices)...>{},
-          variantImpl::mySeqOfNum<Ns...>{}, theIdxPtr, static_cast<F &&>(f),
-          static_cast<Vs &&>(vs)...);
+        if (ceiling > *theIdxPtr){
+          return visitImpl<whichVariantIdx, LowerBound, (Ns == whichVariantIdx ? ceiling - 1
+                                                         : Indices)...>();
+        } else {
+          return visitImpl<whichVariantIdx, ceiling, (Ns == whichVariantIdx ? theUpperBound
+                                                         : Indices)...>();
+        }
+      }
     }
-  }
-}
+  };
+
 } // namespace visitHelper
 // Set checkIfValueless to false if user knows variants will never be valueless
 template <bool checkIfValueless = true, class Visitor, class... Variants>
@@ -1450,11 +1454,7 @@ constexpr decltype(auto) visit(Visitor &&vis,
         throw szLogVar::bad_variant_access{};
     }
     const std::size_t theVariantIndices[]{vars.index()...};
-    return visitHelper::visitOneIfCheck<0, 0>(
-        variantImpl::mySeqOfNum<(
-            szHelpMethods::aliasForCVRef<Variants>::numTypes - 1)...>{},
-        variantImpl::theIndexSeq<sizeof...(vars)>{}, theVariantIndices,
-        static_cast<Visitor &&>(vis), static_cast<Variants &&>(vars)...);
+    return visitHelper::simpleTupleReferences<Visitor&&, variantImpl::theIndexSeq<sizeof...(Variants)>, Variants&&...>{theVariantIndices, static_cast<Visitor&&>(vis), static_cast<Variants&&>(vars)...}.template visitImpl<0,0,(szHelpMethods::aliasForCVRef<Variants>::numTypes - 1)... >();
   } else {
     return static_cast<Visitor &&>(vis)();
   }
@@ -1498,6 +1498,8 @@ struct noHash {
 #undef SZ_VAR_TYPE_GETUNCHECKED
 #undef SZ_VAR_TYPE_GETFXN
 #undef SZ_VAR_GETIDXFROMTYPE
+#undef SZ_VAR_VISITTEMPLATEPARAM
+#undef SZ_VAR_VISITSPECPARAM
 } // namespace szLogVar
 
 namespace std {

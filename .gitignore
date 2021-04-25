@@ -1,0 +1,8 @@
+*.json
+*.o
+*.txt
+*.DS_Store
+.vscode/
+betaVariant.hpp
+otherBetaVariant.hpp
+testSyntaxMain.cpp

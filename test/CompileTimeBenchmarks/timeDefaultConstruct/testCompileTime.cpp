@@ -2,13 +2,9 @@
 #include <utility>
 // The define is here! Define TESTMYVARIANT to test szLogVar::variant. Leave
 // undefined to test std::variant
-#define TESTMYVARIANT
+//#define TESTMYVARIANT
 
-#ifdef TESTMYVARIANT
-#include "../include/szLogVar/variant.hpp"
-#else
-#include <variant>
-#endif
+#include "../includeForTest.hpp"
 template <std::size_t N> struct hasInt {};
 
 template <std::size_t... Idx>
@@ -36,7 +32,7 @@ void testCompileTime(std::index_sequence<Idx...>) {
 }
 int main() {
   // Was 3000. Feel free to change it
-  testCompileTime(std::make_index_sequence<3000>{});
+  testCompileTime(std::make_index_sequence<1000>{});
   /*Takes szLogVar::variant about 30 seconds to construct
   szLogVar::variant<hasInt<0>...hasInt<2999>> Implementation defined, but this
   usually exceeds the default max template instantiation limit on other variants
