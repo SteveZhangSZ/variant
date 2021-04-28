@@ -113,7 +113,6 @@ template <class T> constexpr void destroyCurrent(const T &param) {
 #endif
 } // namespace szHelpMethods
 
-
 namespace otherIdxSeq { // Inspired by https://stackoverflow.com/a/32223343
 template <std::size_t... Nums> struct index_sequence;
 #if !(defined(_MSC_VER) || __GNUC__ >= 8)
@@ -135,7 +134,6 @@ decltype(myMergeRenumber(
 myMakeIdxSeq(hasInt<N> *, hasInt<1> *);
 #endif
 } // namespace otherIdxSeq
-
 
 namespace variantImpl {
 #if defined(_MSC_VER) || __GNUC__ >= 8
@@ -166,12 +164,12 @@ template <std::size_t... Idx>
 using mySeqOfNum =
 #if defined(_MSC_VER) || __GNUC__ >= 8
     hasNum<std::size_t, Idx...>;
-    #define SZ_VAR_VISITTEMPLATEPARAM template<class, std::size_t...>
-    #define SZ_VAR_VISITSPECPARAM T<std::size_t,Ns...>*
+#define SZ_VAR_VISITTEMPLATEPARAM template <class, std::size_t...>
+#define SZ_VAR_VISITSPECPARAM T<std::size_t, Ns...> *
 #else
     otherIdxSeq::index_sequence<Idx...> *;
-    #define SZ_VAR_VISITTEMPLATEPARAM template<std::size_t...>
-    #define SZ_VAR_VISITSPECPARAM T<Ns...>*
+#define SZ_VAR_VISITTEMPLATEPARAM template <std::size_t...>
+#define SZ_VAR_VISITSPECPARAM T<Ns...> *
 #endif
 
 constexpr bool
@@ -288,350 +286,184 @@ class theUnionBase;
   decltype(variantImpl::getBaseClass<T>(                                       \
       static_cast<variantImpl::allIdxAndTypes<TYPELISTNAME> *>(0)))::theIdx
 
+#ifdef _MSC_VER
+/*Needed in MSVC to make a copy of nonconst variant work*/
+#define SZ_VAR_FORCONVERTCTOR                                                  \
+  , std::size_t = sizeof(szHelpMethods::isAVariant(                            \
+        static_cast<szHelpMethods::twoTypes<                                   \
+            szLogVar::variant<Ts...>,                                          \
+            typename std::remove_cv_t<std::remove_reference_t<T>>> *>(0)))
+#else
+#define SZ_VAR_FORCONVERTCTOR
+#endif
+
+// Macro to define theUnionBase
+#define SZ_VAR_THEUNIONBASE(TREENODEDTOR, UNIONBASEDTOR)                       \
+  template <std::size_t otherLow, std::size_t otherHigh> union treeNode {      \
+    static constexpr std::size_t middleTypeIdx = (otherLow + otherHigh) / 2;   \
+    SZ_VAR_GETIDXFROMTYPE(middleTypeIdx, Ts...) theT;                          \
+    /*If there's only 1 type, there are no children nodes*/                    \
+    decltype(szHelpMethods::getTypeMethod<                                     \
+             makeValueless, treeNode<otherLow, middleTypeIdx - 1>>(            \
+        static_cast<szHelpMethods::hasBool<(otherLow == middleTypeIdx)> *>(    \
+            0))) theLeftBranch;                                                \
+    /*(sizeof...(Ts) < 3) if there are only 1 or 2 types, so no left child     \
+     * node.*/                                                                 \
+    decltype(szHelpMethods::getTypeMethod<                                     \
+             makeValueless, treeNode<middleTypeIdx + 1, otherHigh>>(           \
+        static_cast<szHelpMethods::hasBool<(otherHigh == middleTypeIdx)> *>(   \
+            0))) theRightBranch;                                               \
+    template <std::size_t I, class... Args>                                    \
+    constexpr treeNode(szHelpMethods::twoBools<true, false> *,                 \
+                       const szLogVar::in_place_index_t<I> theIPT,             \
+                       Args &&...args)                                         \
+        : theLeftBranch{static_cast<szHelpMethods::twoBools<                   \
+                            (I < ((otherLow + middleTypeIdx - 1) / 2)),        \
+                            (I > ((otherLow + middleTypeIdx - 1) / 2))> *>(0), \
+                        theIPT, static_cast<Args &&>(args)...} {}              \
+    template <std::size_t I, class... Args>                                    \
+    constexpr treeNode(szHelpMethods::twoBools<false, true> *,                 \
+                       const szLogVar::in_place_index_t<I> theIPT,             \
+                       Args &&...args)                                         \
+        : theRightBranch{                                                      \
+              static_cast<szHelpMethods::twoBools<                             \
+                  (I < ((middleTypeIdx + 1 + otherHigh) / 2)),                 \
+                  (I > ((middleTypeIdx + 1 + otherHigh) / 2))> *>(0),          \
+              theIPT, static_cast<Args &&>(args)...} {}                        \
+    template <class... Args>                                                   \
+    constexpr treeNode(szHelpMethods::twoBools<false, false> *,                \
+                       const szLogVar::in_place_index_t<middleTypeIdx>,        \
+                       Args &&...args)                                         \
+        : theT(static_cast<Args &&>(args)...) {}                               \
+    TREENODEDTOR                                                               \
+  };                                                                           \
+  template <bool Cond, std::size_t otherLow, std::size_t otherHigh>            \
+  using allTrivDestructBranchType =                                            \
+      decltype(szHelpMethods::getTypeMethod<makeValueless,                     \
+                                            treeNode<otherLow, otherHigh>>(    \
+          static_cast<szHelpMethods::hasBool<Cond> *>(0)));                    \
+                                                                               \
+protected:                                                                     \
+  typedef decltype(szHelpMethods::getTypeMethod<                               \
+                   std::uint_least8_t,                                         \
+                   decltype(szHelpMethods::getTypeMethod<                      \
+                            std::uint_least16_t,                               \
+                            decltype(szHelpMethods::getTypeMethod<             \
+                                     std::uint_least32_t, std::size_t>(        \
+                                static_cast<szHelpMethods::hasBool<(           \
+                                    sizeof...(Ts) < UINT_LEAST64_MAX)> *>(     \
+                                    0)))>(                                     \
+                       static_cast<szHelpMethods::hasBool<(                    \
+                           sizeof...(Ts) < UINT_LEAST32_MAX)> *>(0)))>(        \
+      static_cast<szHelpMethods::hasBool<(sizeof...(Ts) < UINT_LEAST16_MAX)>   \
+                      *>(0))) size_type;                                       \
+  size_type theIndex{0};                                                       \
+  static constexpr std::size_t middleTypeIdx = (Low + High) / 2;               \
+  union {                                                                      \
+    SZ_VAR_GETIDXFROMTYPE(middleTypeIdx, Ts...) theT;                          \
+    makeValueless theValueless;                                                \
+    allTrivDestructBranchType<(sizeof...(Ts) < 3), Low, middleTypeIdx - 1>     \
+        theLeftBranch;                                                         \
+    allTrivDestructBranchType<(sizeof...(Ts) == 1), middleTypeIdx + 1, High>   \
+        theRightBranch;                                                        \
+  };                                                                           \
+  /*Constructors*/                                                             \
+  constexpr theUnionBase(makeValueless)                                        \
+      : theIndex{static_cast<size_type>(-1)}, theValueless{} {}                \
+  template <std::size_t I, class... Args>                                      \
+  constexpr theUnionBase(szHelpMethods::twoBools<true, false> *,               \
+                         const szLogVar::in_place_index_t<I> theIPT,           \
+                         Args &&...args)                                       \
+      : theIndex{I},                                                           \
+        theLeftBranch{static_cast<szHelpMethods::twoBools<                     \
+                          (I < ((Low + middleTypeIdx - 1) / 2)),               \
+                          (I > ((Low + middleTypeIdx - 1) / 2))> *>(0),        \
+                      theIPT, static_cast<Args &&>(args)...} {}                \
+  template <std::size_t I, class... Args>                                      \
+  constexpr theUnionBase(szHelpMethods::twoBools<false, true> *,               \
+                         const szLogVar::in_place_index_t<I> theIPT,           \
+                         Args &&...args)                                       \
+      : theIndex{I},                                                           \
+        theRightBranch{static_cast<szHelpMethods::twoBools<                    \
+                           (I < ((middleTypeIdx + 1 + High) / 2)),             \
+                           (I > ((middleTypeIdx + 1 + High) / 2))> *>(0),      \
+                       theIPT, static_cast<Args &&>(args)...} {}               \
+  template <class... Args>                                                     \
+  constexpr theUnionBase(szHelpMethods::twoBools<false, false> *,              \
+                         const szLogVar::in_place_index_t<middleTypeIdx>,      \
+                         Args &&...args)                                       \
+      : theIndex{middleTypeIdx}, theT(static_cast<Args &&>(args)...) {}        \
+                                                                               \
+public:                                                                        \
+  constexpr theUnionBase() noexcept(                                           \
+      std::is_nothrow_default_constructible_v<SZ_VAR_GETIDXFROMTYPE(0,         \
+                                                                    Ts...)>)   \
+      : theUnionBase(                                                          \
+            static_cast<                                                       \
+                szHelpMethods::twoBools<(0 < middleTypeIdx), false> *>(0),     \
+            szLogVar::in_place_index_t<0>{}) {}                                \
+  template <                                                                   \
+      class T                                                                  \
+                                                                               \
+          SZ_VAR_FORCONVERTCTOR,                                               \
+      class U = decltype((static_cast<allIdxAndTypes<Ts...> *>(0)->theMethod(  \
+          szHelpMethods::myDeclval<T>(0), szHelpMethods::myDeclval<T>(0),      \
+          static_cast<szHelpMethods::hasBool<                                  \
+              sizeof(szHelpMethods::isSame(                                    \
+                  static_cast<szHelpMethods::twoTypes<                         \
+                      typename std::remove_cv_t<std::remove_reference_t<T>>,   \
+                      bool> *>(0))) == sizeof(std::size_t)> *>(0))))>          \
+  constexpr theUnionBase(T &&t) noexcept(                                      \
+      std::is_nothrow_constructible_v<SZ_VAR_GETIDXFROMTYPE(U::theIdx, Ts...), \
+                                      T>)                                      \
+      : theUnionBase(U{}, static_cast<T &&>(t)) {}                             \
+  template <class T, std::size_t typeIdx = SZ_VAR_GIVENTYPEGETIDX(Ts...),      \
+            class... Args>                                                     \
+  constexpr explicit theUnionBase(const szLogVar::in_place_type_t<T>,          \
+                                  Args &&...args)                              \
+      : theUnionBase(                                                          \
+            static_cast<szHelpMethods::twoBools<(typeIdx < middleTypeIdx),     \
+                                                (typeIdx > middleTypeIdx)> *>( \
+                0),                                                            \
+            szLogVar::in_place_index_t<typeIdx>{},                             \
+            static_cast<Args &&>(args)...) {}                                  \
+  template <class T, class U,                                                  \
+            std::size_t typeIdx = SZ_VAR_GIVENTYPEGETIDX(Ts...),               \
+            class... Args>                                                     \
+  constexpr explicit theUnionBase(const szLogVar::in_place_type_t<T>,          \
+                                  std::initializer_list<U> il, Args &&...args) \
+      : theUnionBase(                                                          \
+            static_cast<szHelpMethods::twoBools<(typeIdx < middleTypeIdx),     \
+                                                (typeIdx > middleTypeIdx)> *>( \
+                0),                                                            \
+            szLogVar::in_place_index_t<typeIdx>{}, il,                         \
+            static_cast<Args &&>(args)...) {}                                  \
+  template <std::size_t I, class... Args>                                      \
+  constexpr explicit theUnionBase(const szLogVar::in_place_index_t<I> theIPT,  \
+                                  Args &&...args)                              \
+      : theUnionBase(                                                          \
+            static_cast<szHelpMethods::twoBools<(I < middleTypeIdx),           \
+                                                (I > middleTypeIdx)> *>(0),    \
+            theIPT, static_cast<Args &&>(args)...) {}                          \
+  /*Constructors taking an initializer list*/                                  \
+  template <std::size_t I, class U, class... Args>                             \
+  constexpr explicit theUnionBase(const szLogVar::in_place_index_t<I> theIPT,  \
+                                  std::initializer_list<U> il, Args &&...args) \
+      : theUnionBase(                                                          \
+            static_cast<szHelpMethods::twoBools<(I < middleTypeIdx),           \
+                                                (I > middleTypeIdx)> *>(0),    \
+            theIPT, static_cast<std::initializer_list<U> &&>(il),              \
+            static_cast<Args &&>(args)...) {}                                  \
+  UNIONBASEDTOR
+
 template <std::size_t Low, std::size_t High, class... Ts>
 class theUnionBase<true, Low, High, Ts...> {
-
-  template <std::size_t otherLow, std::size_t otherHigh> union treeNode {
-    static constexpr std::size_t middleTypeIdx = (otherLow + otherHigh) / 2;
-    SZ_VAR_GETIDXFROMTYPE(middleTypeIdx, Ts...) theT;
-
-    // If there's only 1 type, there are no children nodes
-    decltype(szHelpMethods::getTypeMethod<
-             makeValueless, treeNode<otherLow, middleTypeIdx - 1>>(
-        static_cast<szHelpMethods::hasBool<(otherLow == middleTypeIdx)> *>(
-            0))) theLeftBranch;
-
-    //(sizeof...(Ts) < 3) if there are only 1 or 2 types, so no left child node.
-    decltype(szHelpMethods::getTypeMethod<
-             makeValueless, treeNode<middleTypeIdx + 1, otherHigh>>(
-        static_cast<szHelpMethods::hasBool<(otherHigh == middleTypeIdx)> *>(
-            0))) theRightBranch;
-
-    template <std::size_t I, class... Args>
-    constexpr treeNode(szHelpMethods::twoBools<true, false> *,
-                       const szLogVar::in_place_index_t<I> theIPT,
-                       Args &&...args)
-        : theLeftBranch{static_cast<szHelpMethods::twoBools<
-                            (I < ((otherLow + middleTypeIdx - 1) / 2)),
-                            (I > ((otherLow + middleTypeIdx - 1) / 2))> *>(0),
-                        theIPT, static_cast<Args &&>(args)...} {}
-    template <std::size_t I, class... Args>
-    constexpr treeNode(szHelpMethods::twoBools<false, true> *,
-                       const szLogVar::in_place_index_t<I> theIPT,
-                       Args &&...args)
-        : theRightBranch{static_cast<szHelpMethods::twoBools<
-                             (I < ((middleTypeIdx + 1 + otherHigh) / 2)),
-                             (I > ((middleTypeIdx + 1 + otherHigh) / 2))> *>(0),
-                         theIPT, static_cast<Args &&>(args)...} {}
-    template <std::size_t I, class... Args>
-    constexpr treeNode(szHelpMethods::twoBools<false, false> *,
-                       const szLogVar::in_place_index_t<I>, Args &&...args)
-        : theT(static_cast<Args &&>(args)...) {}
-  };
-  template <bool Cond, std::size_t otherLow, std::size_t otherHigh>
-  using allTrivDestructBranchType =
-      decltype(szHelpMethods::getTypeMethod<makeValueless,
-                                            treeNode<otherLow, otherHigh>>(
-          static_cast<szHelpMethods::hasBool<Cond> *>(0)));
-
-protected:
-  typedef decltype(szHelpMethods::getTypeMethod<
-                   std::uint_least8_t,
-                   decltype(szHelpMethods::getTypeMethod<
-                            std::uint_least16_t,
-                            decltype(szHelpMethods::getTypeMethod<
-                                     std::uint_least32_t, std::size_t>(
-                                static_cast<szHelpMethods::hasBool<(
-                                    sizeof...(Ts) < UINT_LEAST64_MAX)> *>(0)))>(
-                       static_cast<szHelpMethods::hasBool<(
-                           sizeof...(Ts) < UINT_LEAST32_MAX)> *>(0)))>(
-      static_cast<szHelpMethods::hasBool<(sizeof...(Ts) < UINT_LEAST16_MAX)> *>(
-          0))) size_type;
-
-  size_type theIndex{0};
-  static constexpr std::size_t middleTypeIdx = (Low + High) / 2;
-
-  union {
-    SZ_VAR_GETIDXFROMTYPE(middleTypeIdx, Ts...) theT;
-
-    makeValueless theValueless;
-    allTrivDestructBranchType<(sizeof...(Ts) < 3), Low, middleTypeIdx - 1>
-        theLeftBranch;
-    allTrivDestructBranchType<(sizeof...(Ts) == 1), middleTypeIdx + 1, High>
-        theRightBranch;
-  };
-  // Constructors
-  constexpr theUnionBase(makeValueless)
-      : theIndex{static_cast<size_type>(-1)}, theValueless{} {}
-
-  template <std::size_t I, class... Args>
-  constexpr theUnionBase(szHelpMethods::twoBools<true, false> *,
-                         const szLogVar::in_place_index_t<I> theIPT,
-                         Args &&...args)
-      : theIndex{I}, theLeftBranch{
-                         static_cast<szHelpMethods::twoBools<
-                             (I < ((Low + middleTypeIdx - 1) / 2)),
-                             (I > ((Low + middleTypeIdx - 1) / 2))> *>(0),
-                         theIPT, static_cast<Args &&>(args)...} {}
-  template <std::size_t I, class... Args>
-  constexpr theUnionBase(szHelpMethods::twoBools<false, true> *,
-                         const szLogVar::in_place_index_t<I> theIPT,
-                         Args &&...args)
-      : theIndex{I}, theRightBranch{
-                         static_cast<szHelpMethods::twoBools<
-                             (I < ((middleTypeIdx + 1 + High) / 2)),
-                             (I > ((middleTypeIdx + 1 + High) / 2))> *>(0),
-                         theIPT, static_cast<Args &&>(args)...} {}
-  template <std::size_t I, class... Args>
-  constexpr theUnionBase(szHelpMethods::twoBools<false, false> *,
-                         const szLogVar::in_place_index_t<I>, Args &&...args)
-      : theIndex{I}, theT(static_cast<Args &&>(args)...) {}
-
-public:
-  constexpr theUnionBase() noexcept(
-      std::is_nothrow_default_constructible_v<SZ_VAR_GETIDXFROMTYPE(0, Ts...)>)
-      : theUnionBase(
-            static_cast<szHelpMethods::twoBools<(0 < middleTypeIdx), false> *>(
-                0),
-            szLogVar::in_place_index_t<0>{}) {}
-
-  template <
-      class T
-#ifdef _MSC_VER
-      ,
-      std::size_t = sizeof(szHelpMethods::isAVariant(
-          static_cast<szHelpMethods::twoTypes<
-              szLogVar::variant<Ts...>,
-              typename std::remove_cv_t<std::remove_reference_t<T>>> *>(
-              0))) // Needed in MSVC to make a copy of nonconst variant work
-#endif
-      ,
-      class U = decltype((static_cast<allIdxAndTypes<Ts...> *>(0)->theMethod(
-          szHelpMethods::myDeclval<T>(0), szHelpMethods::myDeclval<T>(0),
-          static_cast<szHelpMethods::hasBool<
-              sizeof(szHelpMethods::isSame(
-                  static_cast<szHelpMethods::twoTypes<
-                      typename std::remove_cv_t<std::remove_reference_t<T>>,
-                      bool> *>(0))) == sizeof(std::size_t)> *>(0))))>
-  constexpr theUnionBase(T &&t) noexcept(
-      std::is_nothrow_constructible_v<SZ_VAR_GETIDXFROMTYPE(U::theIdx, Ts...),
-                                      T>)
-      : theUnionBase(U{}, static_cast<T &&>(t)) {
-  }
-
-  template <class T, std::size_t typeIdx = SZ_VAR_GIVENTYPEGETIDX(Ts...),
-            class... Args>
-  constexpr explicit theUnionBase(const szLogVar::in_place_type_t<T>,
-                                  Args &&...args)
-      : theUnionBase(
-            static_cast<szHelpMethods::twoBools<(typeIdx < middleTypeIdx),
-                                                (typeIdx > middleTypeIdx)> *>(
-                0),
-            szLogVar::in_place_index_t<typeIdx>{},
-            static_cast<Args &&>(args)...) {}
-  template <class T, class U,
-            std::size_t typeIdx = SZ_VAR_GIVENTYPEGETIDX(Ts...), class... Args>
-  constexpr explicit theUnionBase(const szLogVar::in_place_type_t<T>,
-                                  std::initializer_list<U> il, Args &&...args)
-      : theUnionBase(
-            static_cast<szHelpMethods::twoBools<(typeIdx < middleTypeIdx),
-                                                (typeIdx > middleTypeIdx)> *>(
-                0),
-            szLogVar::in_place_index_t<typeIdx>{}, il,
-            static_cast<Args &&>(args)...) {}
-
-  template <std::size_t I, class... Args>
-  constexpr explicit theUnionBase(const szLogVar::in_place_index_t<I> theIPT,
-                                  Args &&...args)
-      : theUnionBase(
-            static_cast<szHelpMethods::twoBools<(I < middleTypeIdx),
-                                                (I > middleTypeIdx)> *>(0),
-            theIPT, static_cast<Args &&>(args)...) {}
-
-  // Constructors taking an initializer list
-  template <std::size_t I, class U, class... Args>
-  constexpr explicit theUnionBase(const szLogVar::in_place_index_t<I> theIPT,
-                                  std::initializer_list<U> il, Args &&...args)
-      : theUnionBase(
-            static_cast<szHelpMethods::twoBools<(I < middleTypeIdx),
-                                                (I > middleTypeIdx)> *>(0),
-            theIPT, static_cast<std::initializer_list<U> &&>(il),
-            static_cast<Args &&>(args)...) {}
+  SZ_VAR_THEUNIONBASE(, )
 };
 
 template <std::size_t Low, std::size_t High, class... Ts>
 class theUnionBase<false, Low, High, Ts...> {
-
-  template <std::size_t otherLow, std::size_t otherHigh> union treeNode {
-    static constexpr std::size_t middleTypeIdx = (otherLow + otherHigh) / 2;
-    SZ_VAR_GETIDXFROMTYPE(middleTypeIdx, Ts...) theT;
-
-    // If there's only 1 type, there are no children nodes
-    decltype(szHelpMethods::getTypeMethod<
-             makeValueless, treeNode<otherLow, middleTypeIdx - 1>>(
-        static_cast<szHelpMethods::hasBool<(otherLow == middleTypeIdx)> *>(
-            0))) theLeftBranch;
-
-    //(sizeof...(Ts) < 3) if there are only 1 or 2 types, so no left child node.
-    decltype(szHelpMethods::getTypeMethod<
-             makeValueless, treeNode<middleTypeIdx + 1, otherHigh>>(
-        static_cast<szHelpMethods::hasBool<(otherHigh == middleTypeIdx)> *>(
-            0))) theRightBranch;
-
-    template <std::size_t I, class... Args>
-    constexpr treeNode(szHelpMethods::twoBools<true, false> *,
-                       const szLogVar::in_place_index_t<I> theIPT,
-                       Args &&...args)
-        : theLeftBranch{static_cast<szHelpMethods::twoBools<
-                            (I < ((otherLow + middleTypeIdx - 1) / 2)),
-                            (I > ((otherLow + middleTypeIdx - 1) / 2))> *>(0),
-                        theIPT, static_cast<Args &&>(args)...} {}
-    template <std::size_t I, class... Args>
-    constexpr treeNode(szHelpMethods::twoBools<false, true> *,
-                       const szLogVar::in_place_index_t<I> theIPT,
-                       Args &&...args)
-        : theRightBranch{static_cast<szHelpMethods::twoBools<
-                             (I < ((middleTypeIdx + 1 + otherHigh) / 2)),
-                             (I > ((middleTypeIdx + 1 + otherHigh) / 2))> *>(0),
-                         theIPT, static_cast<Args &&>(args)...} {}
-    template <std::size_t I, class... Args>
-    constexpr treeNode(szHelpMethods::twoBools<false, false> *,
-                       const szLogVar::in_place_index_t<I>, Args &&...args)
-        : theT(static_cast<Args &&>(args)...) {}
-
-    ~treeNode() {}
-  };
-  template <bool Cond, std::size_t otherLow, std::size_t otherHigh>
-  using allTrivDestructBranchType =
-      decltype(szHelpMethods::getTypeMethod<makeValueless,
-                                            treeNode<otherLow, otherHigh>>(
-          static_cast<szHelpMethods::hasBool<Cond> *>(0)));
-
-protected:
-  typedef decltype(szHelpMethods::getTypeMethod<
-                   std::uint_least8_t,
-                   decltype(szHelpMethods::getTypeMethod<
-                            std::uint_least16_t,
-                            decltype(szHelpMethods::getTypeMethod<
-                                     std::uint_least32_t, std::size_t>(
-                                static_cast<szHelpMethods::hasBool<(
-                                    sizeof...(Ts) < UINT_LEAST64_MAX)> *>(0)))>(
-                       static_cast<szHelpMethods::hasBool<(
-                           sizeof...(Ts) < UINT_LEAST32_MAX)> *>(0)))>(
-      static_cast<szHelpMethods::hasBool<(sizeof...(Ts) < UINT_LEAST16_MAX)> *>(
-          0))) size_type;
-
-  size_type theIndex{0};
-  static constexpr std::size_t middleTypeIdx = (Low + High) / 2;
-
-  union {
-    SZ_VAR_GETIDXFROMTYPE(middleTypeIdx, Ts...) theT;
-
-    makeValueless theValueless;
-    allTrivDestructBranchType<(sizeof...(Ts) < 3), Low, middleTypeIdx - 1>
-        theLeftBranch;
-    allTrivDestructBranchType<(sizeof...(Ts) == 1), middleTypeIdx + 1, High>
-        theRightBranch;
-  };
-
-  // Constructors
-  constexpr theUnionBase(makeValueless)
-      : theIndex{static_cast<size_type>(-1)}, theValueless{} {}
-
-  template <std::size_t I, class... Args>
-  constexpr theUnionBase(szHelpMethods::twoBools<true, false> *,
-                         const szLogVar::in_place_index_t<I> theIPT,
-                         Args &&...args)
-      : theIndex{I}, theLeftBranch{
-                         static_cast<szHelpMethods::twoBools<
-                             (I < ((Low + middleTypeIdx - 1) / 2)),
-                             (I > ((Low + middleTypeIdx - 1) / 2))> *>(0),
-                         theIPT, static_cast<Args &&>(args)...} {}
-  template <std::size_t I, class... Args>
-  constexpr theUnionBase(szHelpMethods::twoBools<false, true> *,
-                         const szLogVar::in_place_index_t<I> theIPT,
-                         Args &&...args)
-      : theIndex{I}, theRightBranch{
-                         static_cast<szHelpMethods::twoBools<
-                             (I < ((middleTypeIdx + 1 + High) / 2)),
-                             (I > ((middleTypeIdx + 1 + High) / 2))> *>(0),
-                         theIPT, static_cast<Args &&>(args)...} {}
-  template <std::size_t I, class... Args>
-  constexpr theUnionBase(szHelpMethods::twoBools<false, false> *,
-                         const szLogVar::in_place_index_t<I>, Args &&...args)
-      : theIndex{I}, theT(static_cast<Args &&>(args)...) {}
-
-public:
-  constexpr theUnionBase() noexcept(
-      std::is_nothrow_default_constructible_v<SZ_VAR_GETIDXFROMTYPE(0, Ts...)>)
-      : theUnionBase(
-            static_cast<szHelpMethods::twoBools<(0 < middleTypeIdx), false> *>(
-                0),
-            szLogVar::in_place_index_t<0>{}) {}
-
-  template <
-      class T
-#ifdef _MSC_VER
-      ,
-      std::size_t = sizeof(szHelpMethods::isAVariant(
-          static_cast<szHelpMethods::twoTypes<
-              szLogVar::variant<Ts...>,
-              typename std::remove_cv_t<std::remove_reference_t<T>>> *>(
-              0))) // Needed in MSVC to make a copy of nonconst variant work
-#endif
-      ,
-      class U = decltype((static_cast<allIdxAndTypes<Ts...> *>(0)->theMethod(
-          szHelpMethods::myDeclval<T>(0), szHelpMethods::myDeclval<T>(0),
-          static_cast<szHelpMethods::hasBool<
-              sizeof(szHelpMethods::isSame(
-                  static_cast<szHelpMethods::twoTypes<
-                      typename std::remove_cv_t<std::remove_reference_t<T>>,
-                      bool> *>(0))) == sizeof(std::size_t)> *>(0))))>
-  constexpr theUnionBase(T &&t) noexcept(
-      std::is_nothrow_constructible_v<SZ_VAR_GETIDXFROMTYPE(U::theIdx, Ts...),
-                                      T>)
-      : theUnionBase(U{}, static_cast<T &&>(t)) {
-  }
-
-  template <class T, std::size_t typeIdx = SZ_VAR_GIVENTYPEGETIDX(Ts...),
-            class... Args>
-  constexpr explicit theUnionBase(const szLogVar::in_place_type_t<T>,
-                                  Args &&...args)
-      : theUnionBase(
-            static_cast<szHelpMethods::twoBools<(typeIdx < middleTypeIdx),
-                                                (typeIdx > middleTypeIdx)> *>(
-                0),
-            szLogVar::in_place_index_t<typeIdx>{},
-            static_cast<Args &&>(args)...) {}
-  template <class T, class U,
-            std::size_t typeIdx = SZ_VAR_GIVENTYPEGETIDX(Ts...), class... Args>
-  constexpr explicit theUnionBase(const szLogVar::in_place_type_t<T>,
-                                  std::initializer_list<U> il, Args &&...args)
-      : theUnionBase(
-            static_cast<szHelpMethods::twoBools<(typeIdx < middleTypeIdx),
-                                                (typeIdx > middleTypeIdx)> *>(
-                0),
-            szLogVar::in_place_index_t<typeIdx>{}, il,
-            static_cast<Args &&>(args)...) {}
-
-  template <std::size_t I, class... Args>
-  constexpr explicit theUnionBase(const szLogVar::in_place_index_t<I> theIPT,
-                                  Args &&...args)
-      : theUnionBase(
-            static_cast<szHelpMethods::twoBools<(I < middleTypeIdx),
-                                                (I > middleTypeIdx)> *>(0),
-            theIPT, static_cast<Args &&>(args)...) {}
-
-  // Constructors taking an initializer list
-  template <std::size_t I, class U, class... Args>
-  constexpr explicit theUnionBase(const szLogVar::in_place_index_t<I> theIPT,
-                                  std::initializer_list<U> il, Args &&...args)
-      : theUnionBase(
-            static_cast<szHelpMethods::twoBools<(I < middleTypeIdx),
-                                                (I > middleTypeIdx)> *>(0),
-            theIPT, static_cast<std::initializer_list<U> &&>(il),
-            static_cast<Args &&>(args)...) {}
-  ~theUnionBase() {}
+  SZ_VAR_THEUNIONBASE(~treeNode(){}, ~theUnionBase(){})
 };
 #ifdef _MSC_VER
 #define SZ_VAR_THEDESTROYER                                                    \
@@ -1197,7 +1029,7 @@ struct variantMoveAssign<false, variantImpl::mySeqOfNum<Idx...>, Ts...>
     }
     SZ_VAR_DESTROYCURRENT
 
-    this->theIndex = static_cast<decltype(-1)>(-1);
+    this->theIndex = static_cast<decltype(this->theIndex)>(-1);
 
     static_cast<void>(szHelpMethods::expander<bool>{
         (Idx == other.index() &&
@@ -1208,7 +1040,7 @@ struct variantMoveAssign<false, variantImpl::mySeqOfNum<Idx...>, Ts...>
                   const_cast<Ts &>(other.template getImpl<Idx>(other)))),
           true))...});
 
-    this->theIndex = other.index();
+    this->theIndex = other.theIndex;
     return *this;
   }
 };
@@ -1401,47 +1233,59 @@ constexpr decltype(auto) invoke(F &&f, Args &&...args) {
 }
 
 // https://en.wikipedia.org/wiki/Binary_search_algorithm#Alternative_procedure
-  template<std::size_t I, class T> struct containsReference{
-      T theRef;
-      constexpr containsReference(T&& param) : theRef{static_cast<T&&>(param)}{}
-  };
+template <std::size_t I, class T> struct containsReference {
+  T theRef;
+  constexpr containsReference(T &&param) : theRef{static_cast<T &&>(param)} {}
+};
 
-  template<class...> struct simpleTupleReferences;
+template <class...> struct simpleTupleReferences;
 
-  template<class F, std::size_t... Ns, class... Ts> 
-  struct simpleTupleReferences<F, variantImpl::mySeqOfNum<Ns...>, Ts...> : containsReference<Ns,Ts>...{
-    std::size_t const *theIdxPtr;
-    F theF;
+template <class F, std::size_t... Ns, class... Ts>
+struct simpleTupleReferences<F, variantImpl::mySeqOfNum<Ns...>, Ts...>
+    : containsReference<Ns, Ts>... {
+  std::size_t const *theIdxPtr;
+  F theF;
 
-    template<class F_Arg,class... Args>
-    constexpr simpleTupleReferences(std::size_t const * ptrParam, F_Arg&& paramF, Args&&... args) : 
-    containsReference<Ns,Ts>{static_cast<Args&&>(args)}...,theIdxPtr{ptrParam}, theF{static_cast<F_Arg&&>(paramF)} {}
+  template <class F_Arg, class... Args>
+  constexpr simpleTupleReferences(std::size_t const *ptrParam, F_Arg &&paramF,
+                                  Args &&...args)
+      : containsReference<Ns, Ts>{static_cast<Args &&>(args)}...,
+        theIdxPtr{ptrParam}, theF{static_cast<F_Arg &&>(paramF)} {}
 
-    template<std::size_t whichVariantIdx, std::size_t LowerBound, std::size_t... Indices> 
-    constexpr decltype(invoke(static_cast<F&&>(theF), szLogVar::get_unchecked<0>(szHelpMethods::myDeclval<Ts>(0))...)) visitImpl(){
-      constexpr std::size_t theUpperBound = szHelpMethods::expander<std::size_t>{Indices...}[whichVariantIdx];
-      
-      if constexpr(LowerBound == theUpperBound){
-        if constexpr(whichVariantIdx == (sizeof...(Ts) - 1)){
-          return invoke(static_cast<F&&>(theF), szLogVar::get_unchecked<Indices>( static_cast<Ts&&>(static_cast<containsReference<Ns,Ts>&>(*this).theRef ) )... );
-        } else{
-          ++theIdxPtr;
-          return visitImpl<whichVariantIdx + 1, 0, (Ns == whichVariantIdx ? LowerBound
-                                                         : Indices)...>();
-        }
+  template <std::size_t whichVariantIdx, std::size_t LowerBound,
+            std::size_t... Indices>
+  constexpr decltype(invoke(
+      static_cast<F &&>(theF),
+      szLogVar::get_unchecked<0>(szHelpMethods::myDeclval<Ts>(0))...))
+  visitImpl() {
+    constexpr std::size_t theUpperBound =
+        szHelpMethods::expander<std::size_t>{Indices...}[whichVariantIdx];
+
+    if constexpr (LowerBound == theUpperBound) {
+      if constexpr (whichVariantIdx == (sizeof...(Ts) - 1)) {
+        return invoke(
+            static_cast<F &&>(theF),
+            szLogVar::get_unchecked<Indices>(static_cast<Ts &&>(
+                static_cast<containsReference<Ns, Ts> &>(*this).theRef))...);
       } else {
-        constexpr std::size_t ceiling = ((LowerBound + theUpperBound) / 2) +
-                                    ((LowerBound & 1) ^ (theUpperBound & 1));
-        if (ceiling > *theIdxPtr){
-          return visitImpl<whichVariantIdx, LowerBound, (Ns == whichVariantIdx ? ceiling - 1
-                                                         : Indices)...>();
-        } else {
-          return visitImpl<whichVariantIdx, ceiling, (Ns == whichVariantIdx ? theUpperBound
-                                                         : Indices)...>();
-        }
+        ++theIdxPtr;
+        return visitImpl<whichVariantIdx + 1, 0,
+                         (Ns == whichVariantIdx ? LowerBound : Indices)...>();
+      }
+    } else {
+      constexpr std::size_t ceiling = ((LowerBound + theUpperBound) / 2) +
+                                      ((LowerBound & 1) ^ (theUpperBound & 1));
+      if (ceiling > *theIdxPtr) {
+        return visitImpl<whichVariantIdx, LowerBound,
+                         (Ns == whichVariantIdx ? ceiling - 1 : Indices)...>();
+      } else {
+        return visitImpl<whichVariantIdx, ceiling,
+                         (Ns == whichVariantIdx ? theUpperBound
+                                                : Indices)...>();
       }
     }
-  };
+  }
+};
 
 } // namespace visitHelper
 // Set checkIfValueless to false if user knows variants will never be valueless
@@ -1454,7 +1298,12 @@ constexpr decltype(auto) visit(Visitor &&vis,
         throw szLogVar::bad_variant_access{};
     }
     const std::size_t theVariantIndices[]{vars.index()...};
-    return visitHelper::simpleTupleReferences<Visitor&&, variantImpl::theIndexSeq<sizeof...(Variants)>, Variants&&...>{theVariantIndices, static_cast<Visitor&&>(vis), static_cast<Variants&&>(vars)...}.template visitImpl<0,0,(szHelpMethods::aliasForCVRef<Variants>::numTypes - 1)... >();
+    return visitHelper::simpleTupleReferences<
+               Visitor &&, variantImpl::theIndexSeq<sizeof...(Variants)>,
+               Variants &&...>{theVariantIndices, static_cast<Visitor &&>(vis),
+                               static_cast<Variants &&>(vars)...}
+        .template visitImpl<
+            0, 0, (szHelpMethods::aliasForCVRef<Variants>::numTypes - 1)...>();
   } else {
     return static_cast<Visitor &&>(vis)();
   }
@@ -1500,6 +1349,8 @@ struct noHash {
 #undef SZ_VAR_GETIDXFROMTYPE
 #undef SZ_VAR_VISITTEMPLATEPARAM
 #undef SZ_VAR_VISITSPECPARAM
+#undef SZ_VAR_THEUNIONBASE
+#undef SZ_VAR_FORCONVERTCTOR
 } // namespace szLogVar
 
 namespace std {

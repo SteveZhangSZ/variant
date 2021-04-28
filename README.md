@@ -70,7 +70,7 @@ Compiler: clang++ version 12.0.0
 
 Target: x86_64-apple-darwin19.6.0
 
-Supported compilers, as tested on [godbolt](https://godbolt.org/z/6oPczjnd6):
+Supported compilers, as tested on [godbolt](https://godbolt.org/z/56Yerrj4f):
 * x86-64 clang 5.0.0 and above, with `-std=c++17` flag
 * x86-64 gcc 8.3 and above, with `-std=c++17` flag
 * x64 msvc 19.24 and above, with `/std:c++17` flag
