@@ -8,30 +8,51 @@
 #include <new>              //placement new
 #include <type_traits>      //need lots of traits
 
-//#include <iostream> //Debugging
+#ifdef _MSC_VER
+#define SZ_VAR_CPPVERSION _MSVC_LANG
+#else
+#define SZ_VAR_CPPVERSION __cplusplus
+#endif
+
+#if __has_include(<compare>) && SZ_VAR_CPPVERSION > 201703L
+#include <compare> //For operator <=>
+#endif
 
 #ifdef __has_builtin
-#if defined(__clang__) && __has_builtin(__type_pack_element)
-#define SZ_VAR_HASTYPEPACKELEM
+  #if defined(__clang__) && __has_builtin(__type_pack_element)
+  #define SZ_VAR_HASTYPEPACKELEM
 
-#define SZ_VAR_GETIDXFROMTYPE(THEIDX, THETYPES)                                \
-  __type_pack_element<THEIDX, THETYPES>
-#endif
+  #define SZ_VAR_GETIDXFROMTYPE(THEIDX, THETYPES)                                \
+    __type_pack_element<THEIDX, THETYPES>
+  #endif
 #endif
 #ifndef SZ_VAR_HASTYPEPACKELEM
-#define SZ_VAR_GETIDXFROMTYPE(THEIDX, THETYPES)                                \
-  typename decltype(variantImpl::getBaseClass<THEIDX>(                         \
-      static_cast<variantImpl::allIdxAndTypes<THETYPES> *>(0)))::type
+
+  #if SZ_VAR_CPPVERSION <= 201703L || !defined(__clang__)
+
+  #define SZ_VAR_GETIDXFROMTYPE(THEIDX, THETYPES)                                \
+    typename decltype(variantImpl::getBaseClass<THEIDX>(                         \
+        static_cast<variantImpl::allIdxAndTypes<THETYPES> *>(0)))::type
+  #else
+  #define SZ_VAR_GETIDXFROMTYPE(THEIDX, THETYPES) \
+  typename decltype(variantImpl::getBaseClass<THEIDX>(static_cast<variantImpl::variantCpp20Impl<variantImpl::theIndexSeq<sizeof...(THETYPES)>,THETYPES> *>(0)))::type
+  #endif
+
 #endif
 
 namespace szLogVar {
 struct monostate {};
 constexpr bool operator==(monostate, monostate) noexcept { return true; }
+
+#if __has_include(<compare>) && SZ_VAR_CPPVERSION > 201703L
+constexpr std::strong_ordering operator<=>(monostate, monostate) noexcept { return std::strong_ordering::equal; }
+#else
 constexpr bool operator!=(monostate, monostate) noexcept { return false; }
 constexpr bool operator<(monostate, monostate) noexcept { return false; }
 constexpr bool operator>(monostate, monostate) noexcept { return false; }
 constexpr bool operator<=(monostate, monostate) noexcept { return true; }
 constexpr bool operator>=(monostate, monostate) noexcept { return true; }
+#endif
 
 template <class T> struct in_place_type_t {
   explicit constexpr in_place_type_t() = default;
@@ -85,18 +106,30 @@ template <class TypeInVar, std::size_t N> struct getRightType {
   typedef TypeInVar type;
   constexpr static std::size_t theIdx = N;
 
+  #if SZ_VAR_CPPVERSION <= 201703L
   template <class U>
   constexpr szLogVar::in_place_index_t<N> theMethod(
       TypeInVar, // Makes it so (char const&)[N] better match for const char*
                  // than std::string
       U &&param,
+        // Check if U is a bool.
       hasBool<
-          // Check if U is a bool.
+          
           (sizeof(isSame(
                static_cast<twoTypes<aliasForCVRef<TypeInVar>, bool> *>(0))) ==
            sizeof(std::size_t))> *,
       decltype(sizeof(arrayOfOne<TypeInVar>{
           static_cast<U &&>(param)})) = 0) const;
+  #else
+  template <class U>
+  static
+  constexpr szLogVar::in_place_index_t<N> theMethod(TypeInVar, U &&param,
+  hasBool<(sizeof(isSame(
+               static_cast<twoTypes<aliasForCVRef<TypeInVar>, bool> *>(0))) ==
+           sizeof(std::size_t))> *
+  ) requires requires{ arrayOfOne<TypeInVar>{static_cast<U &&>(param)}; };
+
+  #endif
 };
 
 template <class T> T &&myDeclval(int);
@@ -104,8 +137,13 @@ template <class T> T myDeclval(long);
 
 // Used for SFINAE and to stop the (T&&) ctor from being too greedy
 template <class T> void isAVariant(twoTypes<T, T> *);
-
 std::size_t isAVariant(...);
+
+//Check if type is void. function type with cv-qualifier or ref-qualifier can't be referenceable either, but this
+//is only used for visit(), to check if the Visitor's return type is void.
+template<class T, class U = T&> bool isVoid(int);
+template<class T> std::size_t isVoid(long);
+
 #ifdef _MSC_VER
 template <class T> constexpr void destroyCurrent(const T &param) {
   param.~T(); // Used for variant's destructor, destroys the contained object
@@ -164,12 +202,8 @@ template <std::size_t... Idx>
 using mySeqOfNum =
 #if defined(_MSC_VER) || __GNUC__ >= 8
     hasNum<std::size_t, Idx...>;
-#define SZ_VAR_VISITTEMPLATEPARAM template <class, std::size_t...>
-#define SZ_VAR_VISITSPECPARAM T<std::size_t, Ns...> *
 #else
     otherIdxSeq::index_sequence<Idx...> *;
-#define SZ_VAR_VISITTEMPLATEPARAM template <std::size_t...>
-#define SZ_VAR_VISITSPECPARAM T<Ns...> *
 #endif
 
 constexpr bool
@@ -182,23 +216,40 @@ checkAnyFalse(const std::initializer_list<bool> theBoolList) noexcept {
 }
 struct makeValueless {};
 
+#if SZ_VAR_CPPVERSION <= 201703L
 // Used for conditionally trivial member functions
 template <bool triviallyMoveAssign, class... Ts> struct variantMoveAssign;
+#else
+template<
+#ifdef __clang__
+bool trivDestructible,
+#endif
+class...> class variantCpp20Impl;
+#endif
 } // namespace variantImpl
 
 template <class... Ts>
-using variant = variantImpl::variantMoveAssign<
+using variant = 
+#if SZ_VAR_CPPVERSION <= 201703L
+variantImpl::variantMoveAssign<
     //(std::is_trivially_move_assignable<Ts>::value && ...),
     variantImpl::checkAnyFalse(
         {std::is_trivially_move_assignable<Ts>::value...}),
     variantImpl::theIndexSeq<sizeof...(Ts)>, Ts...>;
+#else
+variantImpl::variantCpp20Impl<
+#ifdef __clang__
+variantImpl::checkAnyFalse({std::is_trivially_destructible<Ts>::value...}),
+#endif
+variantImpl::theIndexSeq<sizeof...(Ts)>, Ts...>;
+#endif
+
 
 namespace variantImpl {
 template <typename...> struct everyIdxAndType; // helper
 template <std::size_t... Idx, typename... Ts>
 struct everyIdxAndType<variantImpl::mySeqOfNum<Idx...>, Ts...>
-    : public szHelpMethods::getRightType<
-          Ts, Idx>... // for the (T&&) variant constructor and assignment
+    : public szHelpMethods::getRightType<Ts, Idx>... // for the (T&&) variant constructor and assignment
 {
   using szHelpMethods::getRightType<Ts, Idx>::theMethod...;
 };
@@ -274,17 +325,16 @@ inline constexpr std::size_t variant_npos = static_cast<std::size_t>(-1);
 SZ_VAR_IDX_GETUNCHECKED(const, , &); // Prototypes of friend functions
 SZ_VAR_GETFXN_DECLARATION(const, , &);
 template <std::size_t I, class... Types>
-constexpr std::add_pointer_t<const SZ_VAR_GETIDXFROMTYPE(I, Types...)>
+constexpr const SZ_VAR_GETIDXFROMTYPE(I, Types...)*
 get_if(const szLogVar::variant<Types...> *pv) noexcept;
 
-namespace variantImpl {
-template <bool triviallyDestructible, std::size_t Low, std::size_t High,
-          class... Ts>
-class theUnionBase;
-
+#if SZ_VAR_CPPVERSION <= 201703L || !defined(__clang__)
 #define SZ_VAR_GIVENTYPEGETIDX(TYPELISTNAME)                                   \
   decltype(variantImpl::getBaseClass<T>(                                       \
       static_cast<variantImpl::allIdxAndTypes<TYPELISTNAME> *>(0)))::theIdx
+#else
+#define SZ_VAR_GIVENTYPEGETIDX(TYPELISTNAME) decltype(variantImpl::getBaseClass<T>(static_cast<variant<TYPELISTNAME> *>(0)))::theIdx
+#endif
 
 #ifdef _MSC_VER
 /*Needed in MSVC to make a copy of nonconst variant work*/
@@ -293,10 +343,26 @@ class theUnionBase;
         static_cast<szHelpMethods::twoTypes<                                   \
             szLogVar::variant<Ts...>,                                          \
             typename std::remove_cv_t<std::remove_reference_t<T>>> *>(0)))
+#define SZ_VAR_THEDESTROYER                                                    \
+  szHelpMethods::destroyCurrent(this->template getImpl<Idx>(*this))
+
 #else
+
 #define SZ_VAR_FORCONVERTCTOR
+#define SZ_VAR_THEDESTROYER this->template getImpl<Idx>(*this).~Ts()
 #endif
 
+#define SZ_VAR_DESTROYCURRENT                                                  \
+  if (!szHelpMethods::expander<bool>{                                          \
+          std::is_trivially_destructible<Ts>::value...}[this->index()]) {      \
+    static_cast<void>(szHelpMethods::expander<bool>{                           \
+        (Idx == this->theIndex && (SZ_VAR_THEDESTROYER, true))...});           \
+  }
+namespace variantImpl {
+
+template <bool triviallyDestructible, std::size_t Low, std::size_t High,
+          class... Ts> class theUnionBase;
+#if SZ_VAR_CPPVERSION <= 201703L
 // Macro to define theUnionBase
 #define SZ_VAR_THEUNIONBASE(TREENODEDTOR, UNIONBASEDTOR)                       \
   template <std::size_t otherLow, std::size_t otherHigh> union treeNode {      \
@@ -465,20 +531,9 @@ template <std::size_t Low, std::size_t High, class... Ts>
 class theUnionBase<false, Low, High, Ts...> {
   SZ_VAR_THEUNIONBASE(~treeNode(){}, ~theUnionBase(){})
 };
-#ifdef _MSC_VER
-#define SZ_VAR_THEDESTROYER                                                    \
-  szHelpMethods::destroyCurrent(this->template getImpl<Idx>(*this))
-#else
-#define SZ_VAR_THEDESTROYER this->template getImpl<Idx>(*this).~Ts()
-#endif
 
 template <class...> class variantBase;
-#define SZ_VAR_DESTROYCURRENT                                                  \
-  if (!szHelpMethods::expander<bool>{                                          \
-          std::is_trivially_destructible<Ts>::value...}[this->index()]) {      \
-    static_cast<void>(szHelpMethods::expander<bool>{                           \
-        (Idx == this->theIndex && (SZ_VAR_THEDESTROYER, true))...});           \
-  }
+
 
 template <std::size_t... Idx, class... Ts>
 class variantBase<variantImpl::mySeqOfNum<Idx...>, Ts...>
@@ -583,7 +638,7 @@ public:
       szLogVar::get_unchecked(const szLogVar::variant<theTypes...> &param);
 
   template <std::size_t I, class... Types>
-  friend constexpr std::add_pointer_t<const SZ_VAR_GETIDXFROMTYPE(I, Types...)>
+  friend constexpr const SZ_VAR_GETIDXFROMTYPE(I, Types...)*
   szLogVar::get_if(const szLogVar::variant<Types...> *pv) noexcept;
 
   void swap(variantBase &rhs) noexcept(
@@ -672,7 +727,7 @@ public:
               ))...});
 
         return true;
-      }(szLogVar::variant_alternative<Idx, variant<Ts...>>{}, *this, rhs))...});
+      }(szHelpMethods::getRightType<Ts, Idx>{}, *this, rhs))...});
     }
   }
   // Comparison operators as hidden friends
@@ -894,7 +949,7 @@ struct variantCopyAssign<false, variantImpl::mySeqOfNum<Idx...>, Ts...>
     if (this->index() == other.index()) {
       static_cast<void>(szHelpMethods::expander<bool>{
           (Idx == this->index() &&
-           (const_cast<SZ_VAR_GETIDXFROMTYPE(Idx, Ts...) &>(
+           (const_cast<Ts&>(
                 this->template getImpl<Idx>(*this)) =
                 other.template getImpl<Idx>(other),
             false))...});
@@ -1044,11 +1099,615 @@ struct variantMoveAssign<false, variantImpl::mySeqOfNum<Idx...>, Ts...>
     return *this;
   }
 };
+#else
+
+#if defined(__clang__) || defined(_MSC_VER)
+//This works in Msvc too
+#define SZ_VAR_NOUSEALLIDXANDTYPES : public szHelpMethods::getRightType<Ts, Idx>...
+#define SZ_VAR_USINGOWNRIGHTTYPES using szHelpMethods::getRightType<Ts, Idx>::theMethod...;
+#define SZ_VAR_USEALLIDXANDTYPES
+#else
+#define SZ_VAR_NOUSEALLIDXANDTYPES
+#define SZ_VAR_USINGOWNRIGHTTYPES
+#define SZ_VAR_USEALLIDXANDTYPES static_cast<everyIdxAndType<variantImpl::mySeqOfNum<Idx...>,Ts...> *>(0)->
+#endif
+
+#ifdef _MSC_VER
+#define SZ_VARCPP20_FORCONVERTCTOR requires requires{\
+      sizeof(szHelpMethods::isAVariant(\
+          static_cast<szHelpMethods::twoTypes<\
+              variantCpp20Impl<Ts...>,\
+              typename std::remove_cv_t<std::remove_reference_t<T>>> *>(\
+              0)));\
+    }
+#define SZ_VAR_AUTOPARAM_SWAP ,auto theParam
+#define SZ_VAR_USEPARAMORTHEPARAM theParam
+#define SZ_VAR_COMMAPARAM ,param
+#else
+#define SZ_VARCPP20_FORCONVERTCTOR
+#define SZ_VAR_AUTOPARAM_SWAP
+#define SZ_VAR_USEPARAMORTHEPARAM param
+#define SZ_VAR_COMMAPARAM
+#endif
+
+
+
+  #define SZ_VAR_VARIANTCPP20IMPL(TREENODEDTOR, VARIANTDTOR)\
+  SZ_VAR_NOUSEALLIDXANDTYPES {\
+   \
+     static constexpr bool allTrivDtable = variantImpl::checkAnyFalse({std::is_trivially_destructible<Ts>::value...});\
+     \
+    SZ_VAR_USINGOWNRIGHTTYPES \
+    template <std::size_t otherLow, std::size_t otherHigh> union treeNode {\
+    static constexpr std::size_t middleTypeIdx = (otherLow + otherHigh) / 2;\
+    SZ_VAR_GETIDXFROMTYPE(middleTypeIdx, Ts...) theT;\
+    /*If there's only 1 type, there are no children nodes*/\
+    decltype(szHelpMethods::getTypeMethod<\
+             makeValueless, treeNode<otherLow, middleTypeIdx - 1>>(\
+        static_cast<szHelpMethods::hasBool<(otherLow == middleTypeIdx)> *>(\
+            0))) theLeftBranch;\
+    /*(sizeof...(Ts) < 3) if there are only 1 or 2 types, so no left child node.*/\
+    decltype(szHelpMethods::getTypeMethod<\
+             makeValueless, treeNode<middleTypeIdx + 1, otherHigh>>(\
+        static_cast<szHelpMethods::hasBool<(otherHigh == middleTypeIdx)> *>(\
+            0))) theRightBranch;\
+    template <std::size_t I, class... Args>\
+    requires (I < middleTypeIdx)\
+    constexpr treeNode(const szLogVar::in_place_index_t<I> theIPT,\
+                       Args &&...args)\
+        : theLeftBranch{theIPT, static_cast<Args &&>(args)...} {}\
+    template <std::size_t I, class... Args>\
+    requires (I > middleTypeIdx)\
+    constexpr treeNode(const szLogVar::in_place_index_t<I> theIPT,\
+                       Args &&...args)\
+        : theRightBranch{theIPT, static_cast<Args &&>(args)...} {}\
+    template <class... Args>\
+    constexpr treeNode(const szLogVar::in_place_index_t<middleTypeIdx>, Args &&...args)\
+        : theT(static_cast<Args &&>(args)...) {}\
+        TREENODEDTOR \
+  };\
+    static constexpr std::size_t middleTypeIdx = (0 + (sizeof...(Ts) - 1)) / 2;\
+    typedef decltype(szHelpMethods::getTypeMethod<                               \
+                   std::uint_least8_t,                                         \
+                   decltype(szHelpMethods::getTypeMethod<                      \
+                            std::uint_least16_t,                               \
+                            decltype(szHelpMethods::getTypeMethod<             \
+                                     std::uint_least32_t, std::size_t>(        \
+                                static_cast<szHelpMethods::hasBool<(           \
+                                    sizeof...(Ts) < UINT_LEAST64_MAX)> *>(     \
+                                    0)))>(                                     \
+                       static_cast<szHelpMethods::hasBool<(                    \
+                           sizeof...(Ts) < UINT_LEAST32_MAX)> *>(0)))>(        \
+      static_cast<szHelpMethods::hasBool<(sizeof...(Ts) < UINT_LEAST16_MAX)>   \
+                      *>(0))) size_type;\
+    template <bool Cond, std::size_t otherLow, std::size_t otherHigh>\
+  using allTrivDestructBranchType =\
+      decltype(szHelpMethods::getTypeMethod<makeValueless,treeNode<otherLow, otherHigh>>(static_cast<szHelpMethods::hasBool<Cond> *>(0)));\
+    size_type theIndex;\
+    union {\
+      SZ_VAR_GETIDXFROMTYPE(middleTypeIdx, Ts...) theT;\
+      makeValueless theValueless;\
+      allTrivDestructBranchType<(sizeof...(Ts) < 3), 0, middleTypeIdx - 1>\
+          theLeftBranch;\
+      allTrivDestructBranchType<(sizeof...(Ts) == 1), middleTypeIdx + 1, (sizeof...(Ts) - 1)>\
+          theRightBranch;\
+    };\
+    /*Private methods*/\
+      void makeVariantValueless() {\
+    if constexpr (!(checkAnyFalse(\
+                      {std::is_trivially_destructible<Ts>::value...}))) {\
+      if (!valueless_by_exception()) {\
+      \
+        SZ_VAR_DESTROYCURRENT\
+        this->theIndex = static_cast<decltype(this->theIndex)>(-1);\
+      }\
+    }\
+  }\
+  template <size_t I, class... Args>\
+      SZ_VAR_GETIDXFROMTYPE(I, Ts...) & theEmplaceHelper(Args &&...args) {\
+    if constexpr (!(checkAnyFalse({std::is_trivially_destructible<Ts>::value...}))) {\
+      if (!valueless_by_exception()) {\
+      \
+        SZ_VAR_DESTROYCURRENT\
+        this->theIndex = static_cast<decltype(this->theIndex)>(-1);\
+      }\
+    }\
+    auto &theRef =\
+        *(::new (reinterpret_cast<SZ_VAR_GETIDXFROMTYPE(I, Ts...) *>(\
+            &const_cast<char &>(reinterpret_cast<const volatile char &>(\
+                this->getImpl<I>(*this)))))\
+              SZ_VAR_GETIDXFROMTYPE(I, Ts...)(static_cast<Args &&>(args)...));\
+    this->theIndex = I;\
+    return theRef;\
+  }\
+    template <std::size_t I, class U>\
+    constexpr const SZ_VAR_GETIDXFROMTYPE(I, Ts...) &\
+    getImpl(const U &theU) const{\
+      constexpr std::size_t checkThisIdx =\
+      szHelpMethods::aliasForCVRef<U>::middleTypeIdx;\
+      if constexpr (I < checkThisIdx)\
+        return getImpl<I>(theU.theLeftBranch);\
+      else if constexpr (I > checkThisIdx)\
+        return getImpl<I>(theU.theRightBranch);\
+      else\
+        return theU.theT;\
+      }\
+    /*Constructors*/\
+    constexpr variantCpp20Impl(makeValueless) : theIndex{static_cast<size_type>(-1)}, theValueless{} {}\
+    public:\
+    \
+    static constexpr std::size_t numTypes = sizeof...(Ts);\
+    constexpr variantCpp20Impl() noexcept(\
+      std::is_nothrow_default_constructible_v<SZ_VAR_GETIDXFROMTYPE(0, Ts...)>)\
+      : variantCpp20Impl(szLogVar::in_place_index_t<0>{}) {}\
+    \
+      template <                                                                   \
+      class T                               \
+                                         \
+          SZ_VAR_FORCONVERTCTOR,                                               \
+      class U = decltype((\
+        SZ_VAR_USEALLIDXANDTYPES\
+        theMethod(  \
+          szHelpMethods::myDeclval<T>(0), szHelpMethods::myDeclval<T>(0),      \
+          static_cast<szHelpMethods::hasBool<                                  \
+              sizeof(szHelpMethods::isSame(                                    \
+                  static_cast<szHelpMethods::twoTypes<                         \
+                      typename std::remove_cv_t<std::remove_reference_t<T>>,   \
+                      bool> *>(0))) == sizeof(std::size_t)> *>(0))))>\
+                      \
+    SZ_VARCPP20_FORCONVERTCTOR \
+    constexpr variantCpp20Impl(T&& t) : variantCpp20Impl(U{}, static_cast<T &&>(t)) {}\
+\
+    template <class T, std::size_t typeIdx = SZ_VAR_GIVENTYPEGETIDX(Ts...),\
+            class... Args>\
+  constexpr explicit variantCpp20Impl(const szLogVar::in_place_type_t<T>,\
+                                  Args &&...args) : variantCpp20Impl(szLogVar::in_place_index_t<typeIdx>{},\
+            static_cast<Args &&>(args)...) {}\
+  template <std::size_t I, class... Args>\
+  requires (I < middleTypeIdx)\
+  constexpr explicit variantCpp20Impl(const szLogVar::in_place_index_t<I> theIPT,\
+                                  Args &&...args) : theIndex{I}, theLeftBranch{theIPT, static_cast<Args&&>(args)...} {}\
+  template <std::size_t I, class... Args>\
+  requires (I > middleTypeIdx)\
+  constexpr explicit variantCpp20Impl(const szLogVar::in_place_index_t<I> theIPT,\
+                                  Args &&...args) : theIndex{I},theRightBranch{theIPT, static_cast<Args&&>(args)...} {}\
+  template<class... Args>\
+  constexpr explicit variantCpp20Impl(const szLogVar::in_place_index_t<middleTypeIdx>,\
+  Args &&...args) : theIndex{middleTypeIdx},theT(static_cast<Args&&>(args)...){}\
+\
+  template <std::size_t I, class U, class... Args>\
+  requires (I < middleTypeIdx)\
+  constexpr explicit variantCpp20Impl(const szLogVar::in_place_index_t<I> theIPT,\
+                                  std::initializer_list<U> il, Args &&...args) :theIndex{I}, theLeftBranch{theIPT, static_cast<std::initializer_list<U> &&>(il),\
+            static_cast<Args &&>(args)...}{}\
+  template <std::size_t I, class U, class... Args>\
+  requires (I > middleTypeIdx)\
+  constexpr explicit variantCpp20Impl(const szLogVar::in_place_index_t<I> theIPT,\
+                                  std::initializer_list<U> il, Args &&...args) : theIndex{I},theRightBranch{theIPT, static_cast<std::initializer_list<U> &&>(il),\
+            static_cast<Args &&>(args)...}{}\
+  template <class U, class... Args>\
+  constexpr explicit variantCpp20Impl(const szLogVar::in_place_index_t<middleTypeIdx> theIPT,\
+                                  std::initializer_list<U> il, Args &&...args) : theIndex{middleTypeIdx}, theT(static_cast<std::initializer_list<U> &&>(il),static_cast<Args &&>(args)...){}\
+\
+  constexpr variantCpp20Impl(const variantCpp20Impl&) requires (variantImpl::checkAnyFalse({std::is_trivially_copy_constructible<Ts>::value...})) = default;\
+\
+  variantCpp20Impl(const variantCpp20Impl& param) noexcept(\
+      checkAnyFalse({std::is_nothrow_copy_constructible_v<Ts>...})) : variantCpp20Impl(makeValueless{}){\
+    if(!param.valueless_by_exception()){\
+      static_cast<void>(szHelpMethods::expander<bool>{ ((Idx == param.index()) && (::new(this)variantCpp20Impl{\
+        szLogVar::in_place_index_t<Idx>{}, param.template getImpl<Idx>(param)\
+      } ) )... });\
+    }\
+  }\
+  constexpr variantCpp20Impl(variantCpp20Impl& param) : variantCpp20Impl(const_cast<const variantCpp20Impl&>(param)){}\
+  constexpr variantCpp20Impl(variantCpp20Impl&&) requires (variantImpl::checkAnyFalse({std::is_trivially_move_constructible<Ts>::value...})) = default;\
+  variantCpp20Impl(variantCpp20Impl&& param) noexcept(\
+      checkAnyFalse({std::is_nothrow_move_constructible_v<Ts>...})) : variantCpp20Impl(makeValueless{}){\
+    if(!param.valueless_by_exception()){\
+      static_cast<void>(szHelpMethods::expander<bool>{ ((Idx == param.index()) && (::new(this)variantCpp20Impl{\
+        szLogVar::in_place_index_t<Idx>{}, static_cast<Ts&&>(const_cast<Ts&>(param.template getImpl<Idx>(param)))\
+      } ) )... }); \
+    }\
+  }\
+  constexpr variantCpp20Impl& operator=(const variantCpp20Impl&) requires (variantImpl::checkAnyFalse({std::is_trivially_copy_assignable<Ts>::value...})) = default;\
+\
+  variantCpp20Impl& operator=(const variantCpp20Impl& other){\
+        if (other.valueless_by_exception()) {\
+      if (this->valueless_by_exception())\
+        return *this;\
+\
+      if constexpr (!(checkAnyFalse(\
+                        {std::is_trivially_destructible<Ts>::value...}))) {\
+        SZ_VAR_DESTROYCURRENT \
+        this->theIndex = static_cast<decltype(this->theIndex)>(-1);\
+      }\
+      return *this;\
+    }\
+    if (this->index() == other.index()) {\
+      static_cast<void>(szHelpMethods::expander<bool>{\
+          (Idx == this->index() &&\
+           (const_cast<SZ_VAR_GETIDXFROMTYPE(Idx, Ts...) &>(\
+                this->template getImpl<Idx>(*this)) =\
+                other.template getImpl<Idx>(other),\
+            false))...});\
+\
+      return *this;\
+    }\
+    if (szHelpMethods::expander<bool>{(\
+            std::is_nothrow_copy_constructible<Ts>::value ||\
+            !std::is_nothrow_move_constructible<Ts>::value)...}[other\
+                                                                    .index()]) {\
+      static_cast<void>(szHelpMethods::expander<bool>{\
+          (Idx == other.index() &&\
+           ((this->template theEmplaceHelper<Idx>(other.template getImpl<Idx>(other)),\
+             false)))...});\
+      return *this;\
+    }\
+    return *this = variant<Ts...>{other};\
+  }\
+  constexpr variantCpp20Impl& operator=(variantCpp20Impl&&) requires (variantImpl::checkAnyFalse({std::is_trivially_move_assignable<Ts>::value...})) = default;\
+\
+  variantCpp20Impl& operator=(variantCpp20Impl&& other) noexcept(\
+      checkAnyFalse({(std::is_nothrow_move_constructible_v<Ts> &&\
+                      std::is_nothrow_move_assignable_v<Ts>)...})) {\
+    if (other.valueless_by_exception()) {\
+      if (this->valueless_by_exception())\
+        return *this;\
+\
+      if constexpr (!(checkAnyFalse(\
+                        {std::is_trivially_destructible<Ts>::value...}))) {\
+        SZ_VAR_DESTROYCURRENT \
+        this->theIndex = static_cast<decltype(this->theIndex)>(-1);\
+      }\
+      return *this;\
+    }\
+    if (this->index() == other.index()) {\
+      static_cast<void>(szHelpMethods::expander<bool>{\
+          (Idx == this->index() &&\
+           (const_cast<Ts &>(this->template getImpl<Idx>(*this)) =\
+                static_cast<Ts &&>(\
+                    const_cast<Ts &>(other.template getImpl<Idx>(other))),\
+            true))...});\
+\
+      return *this;\
+    }\
+    SZ_VAR_DESTROYCURRENT \
+\
+    this->theIndex = static_cast<decltype(this->theIndex)>(-1);\
+\
+    static_cast<void>(szHelpMethods::expander<bool>{\
+        (Idx == other.index() &&\
+         (::new (reinterpret_cast<Ts *>(\
+              &const_cast<char &>(reinterpret_cast<const volatile char &>(\
+                  this->template getImpl<Idx>(*this)))))\
+              Ts(static_cast<Ts &&>(\
+                  const_cast<Ts &>(other.template getImpl<Idx>(other)))),\
+          true))...});\
+\
+    this->theIndex = other.theIndex;\
+    return *this;\
+  }\
+\
+    template <\
+      class T,\
+      std::size_t theTypeIdx =\
+          decltype(\
+            SZ_VAR_USEALLIDXANDTYPES \
+            theMethod(\
+              szHelpMethods::myDeclval<T>(0), szHelpMethods::myDeclval<T>(0),\
+              static_cast<szHelpMethods::hasBool<\
+                  sizeof(szHelpMethods::isSame(\
+                      static_cast<szHelpMethods::twoTypes<\
+                          typename std::remove_cv_t<std::remove_reference_t<T>>,\
+                          bool> *>(0))) == sizeof(std::size_t)> *>(0)))::theIdx,\
+      class altType = SZ_VAR_GETIDXFROMTYPE(theTypeIdx, Ts...)>\
+      \
+  variantCpp20Impl &operator=(T &&other) noexcept(\
+      std::is_nothrow_assignable_v<altType &, T>\
+          &&std::is_nothrow_constructible_v<altType, T>) {\
+    if (this->index() == theTypeIdx) {\
+      const_cast<altType &>(this->template getImpl<theTypeIdx>(*this)) =\
+          static_cast<T &&>(other);\
+      return *this;\
+    } else if constexpr (std::is_nothrow_constructible<altType, T>::value ||\
+                         !std::is_nothrow_move_constructible_v<altType>) {\
+      this->template emplace<theTypeIdx>(static_cast<T &&>(other));\
+      return *this;\
+    } else {\
+      return *this = variantCpp20Impl{szLogVar::in_place_index_t<theTypeIdx>{},\
+                                       static_cast<T &&>(other)};\
+    }\
+  }\
+\
+  /*Public methods*/\
+  constexpr std::size_t index() const noexcept {\
+    return valueless_by_exception() ? static_cast<std::size_t>(-1)\
+                                    : this->theIndex;\
+  }\
+  constexpr bool valueless_by_exception() const noexcept {\
+    return this->theIndex == static_cast<decltype(this->theIndex)>(-1);\
+  }\
+\
+  template <size_t I, class... Args>\
+      SZ_VAR_GETIDXFROMTYPE(I, Ts...) & emplace(Args &&...args) {\
+    return theEmplaceHelper<I>(static_cast<Args &&>(args)...);\
+  }\
+  template <size_t I, class U, class... Args>\
+      SZ_VAR_GETIDXFROMTYPE(I, Ts...) &\
+      emplace(std::initializer_list<U> il, Args &&...args) {\
+    return theEmplaceHelper<I>(static_cast<std::initializer_list<U> &&>(il),\
+                               static_cast<Args &&>(args)...);\
+  }\
+  template <class T, class... Args> T &emplace(Args &&...args) {\
+    return theEmplaceHelper<SZ_VAR_GIVENTYPEGETIDX(Ts...)>(\
+        static_cast<Args &&>(args)...);\
+  }\
+  template <class T, class U, class... Args>\
+  T &emplace(std::initializer_list<U> il, Args &&...args) {\
+    return theEmplaceHelper<SZ_VAR_GIVENTYPEGETIDX(Ts...)>(\
+        static_cast<std::initializer_list<U> &&>(il),\
+        static_cast<Args &&>(args)...);\
+  }\
+  /*Friend fxn prototype*/\
+\
+  template <std::size_t I, class... theTypes>\
+      friend constexpr const SZ_VAR_GETIDXFROMTYPE(I, theTypes...) &\
+      szLogVar::get(const szLogVar::variant<theTypes...> &param);\
+\
+  template <std::size_t I, class... theTypes>\
+      friend constexpr const SZ_VAR_GETIDXFROMTYPE(I, theTypes...) &\
+      szLogVar::get_unchecked(const szLogVar::variant<theTypes...> &param);\
+\
+  template <std::size_t I, class... Types>\
+  friend constexpr const SZ_VAR_GETIDXFROMTYPE(I, Types...)*\
+  szLogVar::get_if(const szLogVar::variant<Types...> *pv) noexcept;\
+\
+  void swap(variantCpp20Impl &rhs) noexcept(\
+      checkAnyFalse({(std::is_nothrow_move_constructible_v<Ts> &&\
+                      std::is_nothrow_swappable_v<Ts>)...})) {\
+    using std::swap;\
+    if constexpr (checkAnyFalse(\
+                      {std::is_trivially_move_assignable<Ts>::value...})) {\
+      return swap(*this, rhs);\
+    } else if (this->valueless_by_exception()) {\
+      if (rhs.valueless_by_exception())\
+        return; /*Both variants are valueless*/\
+\
+      static_cast<void>(szHelpMethods::expander<bool>{(\
+          Idx == rhs.index() && (this->theEmplaceHelper<Idx>(static_cast<Ts &&>(\
+                                     const_cast<Ts &>(rhs.getImpl<Idx>(rhs)))),\
+                                 true))...});\
+      return rhs.makeVariantValueless();\
+    } else if (rhs.valueless_by_exception()) {\
+      /*"this" isn't valueless*/\
+      static_cast<void>(szHelpMethods::expander<bool>{\
+          (Idx == this->index() &&\
+           (rhs.theEmplaceHelper<Idx>(static_cast<Ts &&>(\
+                const_cast<Ts &>(this->getImpl<Idx>(*this)))),\
+            true))...});\
+      this->makeVariantValueless(); /*Now it is*/\
+      return;\
+    }\
+\
+    if (this->index() == rhs.index()) {\
+      static_cast<void>(szHelpMethods::expander<bool>{\
+          (Idx == this->index() &&\
+           (swap(const_cast<Ts &>(this->getImpl<Idx>(*this)),\
+                 const_cast<Ts &>(rhs.getImpl<Idx>(rhs))),\
+            true))...});\
+    } else {\
+      static_cast<void>(szHelpMethods::expander<\
+                        bool>{(Idx == this->index() && [otherIdx = rhs.index()](\
+                                                           const auto param,\
+                                                           auto &refThis,\
+                                                           auto &refRight) {\
+        static_cast<void>(szHelpMethods::expander<bool>{(\
+            Idx == otherIdx &&\
+            [](auto &theRef, auto &rhsRef,\
+               auto leftType, auto rightType \
+/*Not sure why MSVC can't use param like gcc and clang. Capturing it like*/\
+/*[param] doesn't work MSVC needs this theParam parameter*/\
+\
+SZ_VAR_AUTOPARAM_SWAP \
+            ) {\
+              theRef.template theEmplaceHelper<Idx>(\
+                  static_cast<decltype(rightType) &&>(rightType));\
+\
+              rhsRef.template theEmplaceHelper<decltype(\
+SZ_VAR_USEPARAMORTHEPARAM \
+                  )::theIdx>(static_cast<decltype(leftType) &&>(leftType));\
+\
+              return true;\
+            }(refThis, refRight,\
+              static_cast<SZ_VAR_GETIDXFROMTYPE(decltype(param)::theIdx,\
+                                                Ts...) &&>(\
+                  const_cast<SZ_VAR_GETIDXFROMTYPE(decltype(param)::theIdx,\
+                                                   Ts...) &>(\
+                      refThis.template getImpl<decltype(param)::theIdx>(\
+                          refThis))),\
+              static_cast<Ts &&>(\
+                  const_cast<Ts &>(refRight.template getImpl<Idx>(refRight)))\
+SZ_VAR_COMMAPARAM \
+              ))...});\
+\
+        return true;\
+      }(szHelpMethods::getRightType<Ts, Idx>{}, *this, rhs))...});\
+    }\
+  }\
+  /*Comparison operators as hidden friends*/\
+  friend constexpr bool operator==(const variantCpp20Impl &lhs,\
+                                   const variantCpp20Impl &rhs) {\
+    if (lhs.index() != rhs.index())\
+      return false;\
+    if (lhs.valueless_by_exception())\
+      return true;\
+    bool theBool = false;\
+\
+    static_cast<void>(szHelpMethods::expander<bool>{\
+        (Idx == lhs.index() &&\
+         (theBool = (lhs.getImpl<Idx>(lhs) == rhs.getImpl<Idx>(rhs)),\
+          true))...});\
+    return theBool;\
+  }\
+  friend constexpr bool operator!=(const variantCpp20Impl &lhs,\
+                                   const variantCpp20Impl &rhs) {\
+    return !(lhs == rhs);\
+  }\
+  friend constexpr bool operator<(const variantCpp20Impl &lhs,\
+                                  const variantCpp20Impl &rhs) {\
+    if (rhs.valueless_by_exception()) {\
+      return false;\
+    }\
+    if (lhs.valueless_by_exception()) {\
+      return true;\
+    }\
+    if (lhs.index() < rhs.index()) {\
+      return true;\
+    }\
+    if (lhs.index() > rhs.index()) {\
+      return false;\
+    }\
+\
+    bool theBool = false;\
+    static_cast<void>(szHelpMethods::expander<bool>{(\
+        Idx == lhs.index() &&\
+        (theBool = (lhs.getImpl<Idx>(lhs) < rhs.getImpl<Idx>(rhs)), true))...});\
+\
+    return theBool;\
+  }\
+  friend constexpr bool operator>(const variantCpp20Impl &lhs,\
+                                  const variantCpp20Impl &rhs) {\
+    if (lhs.valueless_by_exception())\
+      return false;\
+    if (rhs.valueless_by_exception())\
+      return true;\
+    if (lhs.index() > rhs.index())\
+      return true;\
+    if (lhs.index() < rhs.index())\
+      return false;\
+\
+    bool theBool = false;\
+    static_cast<void>(szHelpMethods::expander<bool>{(\
+        Idx == lhs.index() &&\
+        (theBool = (lhs.getImpl<Idx>(lhs) > rhs.getImpl<Idx>(rhs)), true))...});\
+\
+    return theBool;\
+  }\
+  friend constexpr bool operator<=(const variantCpp20Impl &lhs,\
+                                   const variantCpp20Impl &rhs) {\
+    if (lhs.valueless_by_exception())\
+      return true;\
+    if (rhs.valueless_by_exception())\
+      return false;\
+    if (lhs.index() < rhs.index())\
+      return true;\
+    if (lhs.index() > rhs.index())\
+      return false;\
+\
+    bool theBool = false;\
+    static_cast<void>(szHelpMethods::expander<bool>{\
+        (Idx == lhs.index() &&\
+         (theBool = (lhs.getImpl<Idx>(lhs) <= rhs.getImpl<Idx>(rhs)),\
+          true))...});\
+\
+    return theBool;\
+  }\
+  friend constexpr bool operator>=(const variantCpp20Impl &lhs,\
+                                   const variantCpp20Impl &rhs) {\
+    if (rhs.valueless_by_exception())\
+      return true;\
+    if (lhs.valueless_by_exception())\
+      return false;\
+    if (lhs.index() > rhs.index())\
+      return true;\
+    if (lhs.index() < rhs.index())\
+      return false;\
+\
+    bool theBool = false;\
+    static_cast<void>(szHelpMethods::expander<bool>{\
+        (Idx == lhs.index() &&\
+         (theBool = (lhs.getImpl<Idx>(lhs) >= rhs.getImpl<Idx>(rhs)),\
+          true))...});\
+    return theBool;\
+  }\
+  /*End comparison operators*/\
+\
+  VARIANTDTOR 
+
+  #ifdef __clang__
+
+template<std::size_t...Idx, class... Ts> class variantCpp20Impl<true, variantImpl::mySeqOfNum<Idx...>,Ts...>
+SZ_VAR_VARIANTCPP20IMPL(,)
+};
+
+template<std::size_t...Idx, class... Ts> class variantCpp20Impl<false, variantImpl::mySeqOfNum<Idx...>,Ts...>
+SZ_VAR_VARIANTCPP20IMPL(~treeNode(){},constexpr ~variantCpp20Impl() {\
+      if (!this->valueless_by_exception()) {\
+        SZ_VAR_DESTROYCURRENT\
+      } } 
+      )
+};
+#else
+//For non clang, only needs 1 specialization:
+
+template<std::size_t...Idx, class... Ts> class variantCpp20Impl<variantImpl::mySeqOfNum<Idx...>,Ts...>
+    SZ_VAR_VARIANTCPP20IMPL(~treeNode() requires (allTrivDtable) = default; constexpr ~treeNode(){}, constexpr ~variantCpp20Impl() requires (allTrivDtable)= default; \
+    constexpr ~variantCpp20Impl() {\
+      if (!this->valueless_by_exception()) {\
+        SZ_VAR_DESTROYCURRENT \
+      }\
+    }
+    )
+};
+
+#undef SZ_VAR_VARIANTCPP20IMPL
+#undef SZ_VAR_NOUSEALLIDXANDTYPES
+#undef SZ_VAR_USINGOWNRIGHTTYPES
+#undef SZ_VAR_USEALLIDXANDTYPES
+#undef SZ_VARCPP20_FORCONVERTCTOR
+#undef SZ_VAR_AUTOPARAM_SWAP
+#undef SZ_VAR_USEPARAMORTHEPARAM
+#undef SZ_VAR_COMMAPARAM
+
+#endif
+   
+  //Non friend spaceship operator
+  #if __has_include(<compare>) && SZ_VAR_CPPVERSION > 201703L
+  template<
+  #ifdef __clang__
+  bool B,
+  #endif
+  std::size_t... Idx, class... Types >
+  constexpr std::common_comparison_category_t<decltype(szHelpMethods::myDeclval<const Types&>(0) <=> szHelpMethods::myDeclval<const Types&>(0))...> operator<=>(const variantCpp20Impl<
+  #ifdef __clang__
+  B,
+  #endif
+  variantImpl::mySeqOfNum<Idx...>,Types...> & v, const variantCpp20Impl<
+  #ifdef __clang__
+  B,
+  #endif
+  variantImpl::mySeqOfNum<Idx...>,Types...>& w){
+    if(v.valueless_by_exception()){
+          if(w.valueless_by_exception()){
+            return std::strong_ordering::equal;
+          }
+          return std::strong_ordering::less;
+        } else if(w.valueless_by_exception()){
+          return std::strong_ordering::greater;
+        }
+        if(v.index() != w.index()) return v.index() <=> w.index();
+        std::common_comparison_category_t<decltype(szHelpMethods::myDeclval<const Types&>(0) <=> szHelpMethods::myDeclval<const Types&>(0))...> result;
+        static_cast<void>(szHelpMethods::expander<bool>{
+        (Idx == v.index() && (result = (szLogVar::get_unchecked<Idx>(v) <=> szLogVar::get_unchecked<Idx>(w)),true))...});
+        return result;
+  }
+  #endif
+
+#endif
 } // namespace variantImpl
-#undef SZ_VAR_DESTROYCURRENT
 // Friend function definition
 
-// This get functions does not check if I is equal to variant's index.
+// These get functions does not check if I is equal to variant's index.
 SZ_VAR_IDX_GETUNCHECKED(const, , &) { return param.template getImpl<I>(param); }
 SZ_VAR_IDX_GETUNCHECKED(, , &) {
   return const_cast<SZ_VAR_GETIDXFROMTYPE(I, theTypes...) &>(
@@ -1136,29 +1795,33 @@ SZ_VAR_TYPE_GETFXN(const, &&) {
 }
 
 template <std::size_t I, class... Types>
-constexpr std::add_pointer_t<const SZ_VAR_GETIDXFROMTYPE(I, Types...)>
+constexpr const SZ_VAR_GETIDXFROMTYPE(I, Types...)*
 get_if(const szLogVar::variant<Types...> *pv) noexcept {
   if (pv->index() != I)
     return 0;
+  #if defined(__GNUC__) || defined( __clang__ )
+  return __builtin_addressof(pv->template getImpl<I>(*pv));
+  #else
   return std::addressof(pv->template getImpl<I>(*pv));
+  #endif
 }
 
 template <std::size_t I, class... Types>
-constexpr std::add_pointer_t<SZ_VAR_GETIDXFROMTYPE(I, Types...)>
+constexpr SZ_VAR_GETIDXFROMTYPE(I, Types...)*
 get_if(szLogVar::variant<Types...> *pv) noexcept {
-  return const_cast<std::add_pointer_t<SZ_VAR_GETIDXFROMTYPE(I, Types...)>>(
+  return const_cast<SZ_VAR_GETIDXFROMTYPE(I, Types...)*>(
       szLogVar::get_if<I>(const_cast<const szLogVar::variant<Types...> *>(pv)));
 }
 
 template <class T, class... Types>
-constexpr std::add_pointer_t<const T>
+constexpr const T*
 get_if(const szLogVar::variant<Types...> *pv) noexcept {
   return szLogVar::get_if<SZ_VAR_GIVENTYPEGETIDX(Types...)>(pv);
 }
 template <class T, class... Types>
-constexpr std::add_pointer_t<T>
+constexpr T*
 get_if(szLogVar::variant<Types...> *pv) noexcept {
-  return const_cast<std::add_pointer_t<T>>(
+  return const_cast<T*>(
       szLogVar::get_if<SZ_VAR_GIVENTYPEGETIDX(Types...)>(
           const_cast<const szLogVar::variant<Types...> *>(pv)));
 }
@@ -1176,6 +1839,7 @@ void swap(szLogVar::variant<Types...> &lhs,
 
 // Visit function
 namespace visitHelper {
+#if SZ_VAR_CPPVERSION <= 201703L
 template <class T, class U, class... Args>
 szLogVar::in_place_index_t<1> overloadInvoke(decltype(static_cast<void>(
     (szHelpMethods::myDeclval<U>(0).*
@@ -1202,16 +1866,43 @@ template <class T, class U>
 szLogVar::in_place_index_t<5>
 overloadInvoke(decltype(static_cast<void>(szHelpMethods::myDeclval<U>(0).get().*
                                           szHelpMethods::myDeclval<T>(0))) *);
+#else
+template <class T, class U, class... Args>
+szLogVar::in_place_index_t<1> overloadInvoke(T f, U&& t1, Args&&... args) requires requires{
+  (static_cast<U&&>(t1).*f )(static_cast<Args&&>(args)...);
+};
 
-// template<class T, class U> theCharArray<6>
-// overloadInvoke(decltype(static_cast<void>(
-// *(szHelpMethods::myDeclval<U>(0)).*szHelpMethods::myDeclval<T>(0) ))*);
+template<class T, class U, class... Args> 
+szLogVar::in_place_index_t<2> overloadInvoke(T f, U&& t1, Args&&... args) requires requires{
+  (static_cast<U&&>(t1).get().*f)(static_cast<Args&&>(args)...);
+};
+
+template<class T, class U, class... Args> 
+szLogVar::in_place_index_t<3> overloadInvoke(T f, U&& t1, Args&&... args) requires requires{
+  ((*static_cast<U&&>(t1)).*f)(static_cast<Args&&>(args)...);
+};
+
+template<class T, class U> szLogVar::in_place_index_t<4> overloadInvoke(T f, U&& t1) requires requires{
+  static_cast<U&&>(t1).*f;
+};
+
+template<class T, class U> szLogVar::in_place_index_t<5> overloadInvoke(T f, U&& t1) requires requires{
+  static_cast<U&&>(t1).get().*f;
+};
+#endif
+
 template <class T, class U> szLogVar::in_place_index_t<6> overloadInvoke(...);
 
 template <class T, class Type, class T1, class... Args>
 constexpr decltype(auto) invoke(Type T::*f, T1 &&t1, Args &&...args) {
   constexpr auto chooseFxn =
-      decltype(overloadInvoke<decltype(f), T1, Args...>(0))::theIdx;
+      decltype(overloadInvoke
+      #if SZ_VAR_CPPVERSION <= 201703L
+      <decltype(f), T1, Args...>(0)
+      #else
+      (f, static_cast<T1&&>(t1), static_cast<Args&&>(args)...)
+      #endif
+      )::theIdx;
   if constexpr (chooseFxn == 1) {
     return (static_cast<T1 &&>(t1).*f)(static_cast<Args &&>(args)...);
   } else if constexpr (chooseFxn == 2) {
@@ -1232,6 +1923,12 @@ constexpr decltype(auto) invoke(F &&f, Args &&...args) {
   return static_cast<F &&>(f)(static_cast<Args &&>(args)...);
 }
 
+//Used to change the whichVariantIdx'th number into "numToInsert"
+template<std::size_t whichVariantIdx, std::size_t numToInsert, std::size_t... Ns, std::size_t... Indices>
+variantImpl::mySeqOfNum<(Ns == whichVariantIdx ? numToInsert : Indices)...> 
+changedIdxSeq(variantImpl::mySeqOfNum<Ns...>, variantImpl::mySeqOfNum<Indices...>);
+
+
 // https://en.wikipedia.org/wiki/Binary_search_algorithm#Alternative_procedure
 template <std::size_t I, class T> struct containsReference {
   T theRef;
@@ -1243,6 +1940,8 @@ template <class...> struct simpleTupleReferences;
 template <class F, std::size_t... Ns, class... Ts>
 struct simpleTupleReferences<F, variantImpl::mySeqOfNum<Ns...>, Ts...>
     : containsReference<Ns, Ts>... {
+
+  //static constexpr std::size_t theNumTypes[1 + sizeof...(Ts)]{(szHelpMethods::aliasForCVRef<Ts>::numTypes - 1)...};
   std::size_t const *theIdxPtr;
   F theF;
 
@@ -1259,7 +1958,8 @@ struct simpleTupleReferences<F, variantImpl::mySeqOfNum<Ns...>, Ts...>
       szLogVar::get_unchecked<0>(szHelpMethods::myDeclval<Ts>(0))...))
   visitImpl() {
     constexpr std::size_t theUpperBound =
-        szHelpMethods::expander<std::size_t>{Indices...}[whichVariantIdx];
+        szHelpMethods::expander<std::size_t>{Indices...}
+        [whichVariantIdx];
 
     if constexpr (LowerBound == theUpperBound) {
       if constexpr (whichVariantIdx == (sizeof...(Ts) - 1)) {
@@ -1285,6 +1985,25 @@ struct simpleTupleReferences<F, variantImpl::mySeqOfNum<Ns...>, Ts...>
       }
     }
   }
+
+  //Linear search for elements when visit's return type is void. Allows for less template instantiation recursion depth
+  template<std::size_t whichVariantIdx, std::size_t... varAltIdx, std::size_t... Indices>
+  constexpr void visitDiscardReturn(variantImpl::mySeqOfNum<varAltIdx...>,otherIdxSeq::index_sequence<Indices...>*){
+    if constexpr(whichVariantIdx == sizeof...(Ts)){ //Pretty sure it's not sizeof...(Ts) - 1
+      return invoke(
+            static_cast<F &&>(theF),
+            szLogVar::get_unchecked<Indices>(static_cast<Ts &&>(
+                static_cast<containsReference<Ns, Ts> &>(*this).theRef))...);
+    } else {
+      static_cast<void>(szHelpMethods::expander<bool>{
+        ((varAltIdx == *theIdxPtr) && ( ++theIdxPtr,visitDiscardReturn<whichVariantIdx + 1>(
+          variantImpl::theIndexSeq<szHelpMethods::expander<std::size_t>{Indices...,0}[whichVariantIdx + 1]>{},
+          decltype(changedIdxSeq<whichVariantIdx,varAltIdx>(variantImpl::mySeqOfNum<Ns...>{},static_cast<otherIdxSeq::index_sequence<Indices...>*>(0) ) ){}
+        ),true) )
+      ...});
+    }
+  }
+
 };
 
 } // namespace visitHelper
@@ -1292,22 +2011,44 @@ struct simpleTupleReferences<F, variantImpl::mySeqOfNum<Ns...>, Ts...>
 template <bool checkIfValueless = true, class Visitor, class... Variants>
 constexpr decltype(auto) visit(Visitor &&vis,
                                Variants &&...vars) noexcept(!checkIfValueless) {
-  if constexpr (sizeof...(vars) != 0) {
-    if constexpr (checkIfValueless) {
-      if (!variantImpl::checkAnyFalse({!vars.valueless_by_exception()...}))
-        throw szLogVar::bad_variant_access{};
-    }
-    const std::size_t theVariantIndices[]{vars.index()...};
-    return visitHelper::simpleTupleReferences<
-               Visitor &&, variantImpl::theIndexSeq<sizeof...(Variants)>,
-               Variants &&...>{theVariantIndices, static_cast<Visitor &&>(vis),
-                               static_cast<Variants &&>(vars)...}
-        .template visitImpl<
-            0, 0, (szHelpMethods::aliasForCVRef<Variants>::numTypes - 1)...>();
-  } else {
-    return static_cast<Visitor &&>(vis)();
+  #define SZ_VAR_INVOKEBODY(RETURNTYPE) if constexpr (sizeof...(vars) != 0) {\
+    if constexpr (checkIfValueless) {\
+      if (!variantImpl::checkAnyFalse({!vars.valueless_by_exception()...}))\
+        throw szLogVar::bad_variant_access{};\
+    }\
+    const std::size_t theVariantIndices[]{vars.index()...};\
+    if constexpr(sizeof(szHelpMethods::isVoid<RETURNTYPE>(0)) == sizeof(bool)){\
+      /*Not void*/\
+      return visitHelper::simpleTupleReferences<\
+               Visitor &&, variantImpl::theIndexSeq<sizeof...(Variants)>,\
+               Variants &&...>{theVariantIndices, static_cast<Visitor &&>(vis),\
+                               static_cast<Variants &&>(vars)...}\
+        .template visitImpl<\
+            0, 0, (szHelpMethods::aliasForCVRef<Variants>::numTypes - 1)...>();\
+    } else { /*Return type is void*/\
+      visitHelper::simpleTupleReferences<\
+               Visitor &&, variantImpl::theIndexSeq<sizeof...(Variants)>,\
+               Variants &&...>{theVariantIndices, static_cast<Visitor &&>(vis),\
+                               static_cast<Variants &&>(vars)...}\
+        .template visitDiscardReturn<0>(\
+          variantImpl::theIndexSeq<szHelpMethods::expander<std::size_t>{szHelpMethods::aliasForCVRef<Variants>::numTypes...}[0]>{},\
+          variantImpl::mySeqOfNum<szHelpMethods::aliasForCVRef<Variants>::numTypes...>{}\
+          );\
+    }\
+  } else {\
+    return static_cast<Visitor &&>(vis)();\
   }
+
+  SZ_VAR_INVOKEBODY(decltype(visitHelper::invoke(static_cast<Visitor&&>(vis), szLogVar::get_unchecked<0>(static_cast<Variants&&>(vars))...)))
 }
+
+#if SZ_VAR_CPPVERSION > 201703L
+template <class R, bool checkIfValueless = true, class Visitor, class... Variants>
+constexpr R visit( Visitor&& vis, Variants&&... vars ){
+  SZ_VAR_INVOKEBODY(R)
+}
+#endif
+#undef SZ_VAR_INVOKEBODY
 
 namespace hashHelper {
 template <class T> std::size_t isHashable(decltype(std::hash<T>{}) *);
@@ -1315,6 +2056,7 @@ template <class T> bool isHashable(...);
 
 template <class... Ts> struct hasHash;
 
+#if SZ_VAR_CPPVERSION <= 201703L
 template <bool B, std::size_t... Is, class... Ts>
 struct hasHash<szLogVar::variantImpl::variantMoveAssign<
     B, szLogVar::variantImpl::mySeqOfNum<Is...>, Ts...>> {
@@ -1328,8 +2070,35 @@ struct hasHash<szLogVar::variantImpl::variantMoveAssign<
                           ? std::hash<Ts>{}(szLogVar::get_unchecked<Is>(param))
                           : 0)...}[param.index()] +
                       param.index());
-  }
+  }  
 };
+#else
+template <
+#ifdef __clang__
+bool B,
+#endif
+std::size_t... Is, class... Ts>
+struct hasHash<szLogVar::variantImpl::variantCpp20Impl<
+#ifdef __clang__
+B,
+#endif
+    szLogVar::variantImpl::mySeqOfNum<Is...>, Ts...>> {
+  std::size_t
+  operator()(const szLogVar::variantImpl::variantCpp20Impl<
+        #ifdef __clang__
+      B,
+      #endif
+             szLogVar::variantImpl::mySeqOfNum<Is...>, Ts...> &param) const {
+    return (param.valueless_by_exception()
+                ? 87654321 // Arbitrary magic number for valueless
+                : szLogVar::szHelpMethods::expander<std::size_t>{(
+                      Is == param.index()
+                          ? std::hash<Ts>{}(szLogVar::get_unchecked<Is>(param))
+                          : 0)...}[param.index()] +
+                      param.index());
+  }  
+};
+#endif
 
 struct noHash {
   noHash() = delete;
@@ -1347,10 +2116,10 @@ struct noHash {
 #undef SZ_VAR_TYPE_GETUNCHECKED
 #undef SZ_VAR_TYPE_GETFXN
 #undef SZ_VAR_GETIDXFROMTYPE
-#undef SZ_VAR_VISITTEMPLATEPARAM
-#undef SZ_VAR_VISITSPECPARAM
 #undef SZ_VAR_THEUNIONBASE
 #undef SZ_VAR_FORCONVERTCTOR
+#undef SZ_VAR_DESTROYCURRENT
+#undef SZ_VAR_CPPVERSION
 } // namespace szLogVar
 
 namespace std {
@@ -1360,17 +2129,15 @@ template <> struct hash<szLogVar::monostate> {
   }
 };
 
-template <bool B, std::size_t... Is, class... Ts>
-struct hash<szLogVar::variantImpl::variantMoveAssign<
-    B, szLogVar::variantImpl::mySeqOfNum<Is...>, Ts...>>
-    : decltype(szLogVar::szHelpMethods::getTypeMethod<
-               szLogVar::hashHelper::hasHash<
-                   szLogVar::variantImpl::variantMoveAssign<
-                       B, szLogVar::variantImpl::mySeqOfNum<Is...>, Ts...>>,
+template<class... Ts>
+struct hash<szLogVar::variant<Ts...>> : decltype(szLogVar::szHelpMethods::getTypeMethod<
+               szLogVar::hashHelper::hasHash<szLogVar::variant<Ts...>>,
                szLogVar::hashHelper::noHash>(
           static_cast<szLogVar::szHelpMethods::hasBool<
               szLogVar::variantImpl::checkAnyFalse(
                   {(sizeof(szLogVar::hashHelper::isHashable<Ts>(0)) ==
                     sizeof(std::size_t))...})> *>(0))) {};
+
+//variantCpp20Impl<variantImpl::mySeqOfNum<Idx...>,Ts...>
 } // namespace std
 #endif

@@ -2,7 +2,7 @@
 #include <utility>
 // The define is here! Define TESTMYVARIANT to test szLogVar::variant. Leave
 // undefined to test std::variant
-#define TESTMYVARIANT
+//#define TESTMYVARIANT
 
 #include "../includeForTest.hpp"
 template <std::size_t N> struct hasInt {};

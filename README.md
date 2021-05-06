@@ -52,25 +52,35 @@ int main(){
 ```
 ## Benchmarks
 
-| Test name  | szLogVar time (seconds)| std time (seconds)| Test description
-| ------------- | ------------- |-|-|
-[timeConvertCtor](test/CompileTimeBenchmarks/timeConvertCtor/testCompileTime.cpp)|[5.174](test/CompileTimeBenchmarks/timeConvertCtor/szLogVarConvertCtor.png)|[29.164](test/CompileTimeBenchmarks/timeConvertCtor/StdVariantConvertCtor.png)|Measures variant's converting constructor. Variant has 200 types.
-[timeDefaultConstruct](test/CompileTimeBenchmarks/timeDefaultConstruct/testCompileTime.cpp)|[3.849](test/CompileTimeBenchmarks/timeDefaultConstruct/szLogVarDefaultConstruct.png)|[3.647](test/CompileTimeBenchmarks/timeDefaultConstruct/StdVariantDefaultConstruct.png)| Measures variant's default constructor. Variant has 200 types.
-[timeGetIdx](test/CompileTimeBenchmarks/timeGet/timeGetIdx/testCompileTime.cpp) |[10.379](test/CompileTimeBenchmarks/timeGet/timeGetIdx/szLogVarGetIdx.png)|[43.626](test/CompileTimeBenchmarks/timeGet/timeGetIdx/StdVariantGet.png)| Measures `szLogVar::get` and `std::get`, with a specified index. Variant has 300 types.
-[timeGetType](test/CompileTimeBenchmarks/timeGet/timeGetType/testCompileTime.cpp) |[15.155](test/CompileTimeBenchmarks/timeGet/timeGetType/szLogVarGetType.png)|[48.082](test/CompileTimeBenchmarks/timeGet/timeGetType/StdVariantGetType.png)| Measures `szLogVar::get` and `std::get`, with a specified type. Variant has 300 types.
-[timeSmallVariants](test/CompileTimeBenchmarks/timeSmallVariants/testCompileTime.cpp) |[11.445](test/CompileTimeBenchmarks/timeSmallVariants/szLogVarSmallCt.png)|[8.138](test/CompileTimeBenchmarks/timeSmallVariants/StdVariantSmallCt.png)| Measures default construction of 1000 variants with 3 types
-[timeSmallVariantsConvertCtor](test/CompileTimeBenchmarks/timeSmallVariantsConvertCtor/testCompileTime.cpp) |[12.118](test/CompileTimeBenchmarks/timeSmallVariantsConvertCtor/szLogVarSmallConvertCtor.png)|[11.828](test/CompileTimeBenchmarks/timeSmallVariantsConvertCtor/StdVariantSmallConvertCtor.png)|Measures converting construction of 1000 variants with 3 types
-[timeTestVisit](test/CompileTimeBenchmarks/timeTestVisit/testCompileTime.cpp) |[12.136](test/CompileTimeBenchmarks/timeTestVisit/szLogVarVisit.png)|[21.419](test/CompileTimeBenchmarks/timeTestVisit/StdVariantVisit.png)| Measures visit, with 5 variants with 5 types each.
+|Test name|szLogVar time (seconds) C++17|std time (seconds) C++17|szLogVar time (seconds) C++20|std time (seconds) C++20|Test description|
+|-|-|-|-|-|-
+[timeConvertCtor](test/CompileTimeBenchmarks/timeConvertCtor/testCompileTime.cpp)|[5.174](test/CompileTimeBenchmarks/timeConvertCtor/szLogVarConvertCtor.png)|[29.164](test/CompileTimeBenchmarks/timeConvertCtor/StdVariantConvertCtor.png)|[4.813](test/CompileTimeBenchmarks/timeConvertCtor/20szLogVarConvertCtor.png)|[29.278](test/CompileTimeBenchmarks/timeConvertCtor/20StdVariantConvertCtor.png)|Measures variant's converting constructor. Variant has 200 types.
+[timeDefaultConstruct](test/CompileTimeBenchmarks/timeDefaultConstruct/testCompileTime.cpp)|[3.849](test/CompileTimeBenchmarks/timeDefaultConstruct/szLogVarDefaultConstruct.png)|[3.647](test/CompileTimeBenchmarks/timeDefaultConstruct/StdVariantDefaultConstruct.png)|[4.563](test/CompileTimeBenchmarks/timeDefaultConstruct/20szLogVarDefaultConstruct.png)|[4.217](test/CompileTimeBenchmarks/timeDefaultConstruct/20StdVariantDefaultConstruct.png)| Measures variant's default constructor. Variant has 200 types.
+[timeGetIdx](test/CompileTimeBenchmarks/timeGet/timeGetIdx/testCompileTime.cpp) |[10.379](test/CompileTimeBenchmarks/timeGet/timeGetIdx/szLogVarGetIdx.png)|[43.626](test/CompileTimeBenchmarks/timeGet/timeGetIdx/StdVariantGet.png)|[9.93](test/CompileTimeBenchmarks/timeGet/timeGetIdx/20szLogVarGetIdx.png) |[45.857](test/CompileTimeBenchmarks/timeGet/timeGetIdx/20StdVariantGet.png)| Measures `szLogVar::get` and `std::get`, with a specified index. Variant has 300 types.
+[timeGetType](test/CompileTimeBenchmarks/timeGet/timeGetType/testCompileTime.cpp) |[15.155](test/CompileTimeBenchmarks/timeGet/timeGetType/szLogVarGetType.png)|[48.082](test/CompileTimeBenchmarks/timeGet/timeGetType/StdVariantGetType.png)|[16.191](test/CompileTimeBenchmarks/timeGet/timeGetType/20szLogVarGetType.png)|[46.931](test/CompileTimeBenchmarks/timeGet/timeGetType/20StdVariantGetType.png) | Measures `szLogVar::get` and `std::get`, with a specified type. Variant has 300 types.
+[timeSmallVariants](test/CompileTimeBenchmarks/timeSmallVariants/testCompileTime.cpp) |[11.445](test/CompileTimeBenchmarks/timeSmallVariants/szLogVarSmallCt.png)|[8.138](test/CompileTimeBenchmarks/timeSmallVariants/StdVariantSmallCt.png)|[7.162](test/CompileTimeBenchmarks/timeSmallVariants/20szLogVarSmallCt.png)|[9.03](test/CompileTimeBenchmarks/timeSmallVariants/20StdVariantSmallCt.png)| Measures default construction of 1000 variants with 3 types
+[timeSmallVariantsConvertCtor](test/CompileTimeBenchmarks/timeSmallVariantsConvertCtor/testCompileTime.cpp) |[12.118](test/CompileTimeBenchmarks/timeSmallVariantsConvertCtor/szLogVarSmallConvertCtor.png)|[11.828](test/CompileTimeBenchmarks/timeSmallVariantsConvertCtor/StdVariantSmallConvertCtor.png)|[7.273](test/CompileTimeBenchmarks/timeSmallVariantsConvertCtor/20szLogVarSmallConvertCtor.png)|[12.161](test/CompileTimeBenchmarks/timeSmallVariantsConvertCtor/20StdVariantSmallConvertCtor.png)|Measures converting construction of 1000 variants with 3 types
+[timeTestVisit](test/CompileTimeBenchmarks/timeTestVisit/testCompileTime.cpp) |[12.136](test/CompileTimeBenchmarks/timeTestVisit/szLogVarVisit.png)|[21.419](test/CompileTimeBenchmarks/timeTestVisit/StdVariantVisit.png)|[12.697](test/CompileTimeBenchmarks/timeTestVisit/20szLogVarVisit.png)|[24.207](test/CompileTimeBenchmarks/timeTestVisit/20StdVariantVisit.png)| Measures `visit`, with 5 variants with 5 types each.
+|[timeVoidVisit](test/CompileTimeBenchmarks/timeVoidVisit/testCompileTime.cpp)|[10.98](test/CompileTimeBenchmarks/timeVoidVisit/szLogVarVoidVisit.png)|[21.513](test/CompileTimeBenchmarks/timeVoidVisit/stdVariantVoidVisit.png)|[11.861](test/CompileTimeBenchmarks/timeVoidVisit/20szLogVarVoidVisit.png)|[22.575](test/CompileTimeBenchmarks/timeVoidVisit/20stdVariantVoidVisit.png)|Measures `visit` with a lambda returning void, which allows for smaller template instantiation depth, with 5 variants with 5 types each.
 
 `szLogVar::variant` displays a noticeable improvement in compile time if the variant holds many types, though its performance is very similar to `std::variant` when the types are few.
 
-Flags used were `-c` and `-ftime-trace`. 
+Flags used were `-c`, `-ftime-trace`, and `-std=c++17` or `-std=c++20` depending on the standard tested.
 
 Compiler: clang++ version 12.0.0
 
 Target: x86_64-apple-darwin19.6.0
 
-Supported compilers, as tested on [godbolt](https://godbolt.org/z/56Yerrj4f):
+Supported compilers:
+
+C++17 on [godbolt](https://godbolt.org/z/vsoanhYW3):
 * x86-64 clang 5.0.0 and above, with `-std=c++17` flag
 * x86-64 gcc 8.3 and above, with `-std=c++17` flag
 * x64 msvc 19.24 and above, with `/std:c++17` flag
+
+C++20 on [godbolt](https://godbolt.org/z/5M73rfejE):
+* x86-64 clang 10.0.0 and above, with `-std=c++20` flag
+* x86-64 gcc 10.2 and above, with `-std=c++20` flag
+* x64 msvc 19.28 (VS 16.9) and above, with `/std:c++17` flag
+
+Any compiler not listed here might be supported, but has not been tested.

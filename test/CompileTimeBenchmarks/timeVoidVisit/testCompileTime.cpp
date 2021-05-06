@@ -2,21 +2,23 @@
 #include <utility>
 // The define is here! Define TESTMYVARIANT to test szLogVar::variant. Leave
 // undefined to test std::variant
-//#define TESTMYVARIANT
+#define TESTMYVARIANT
 
 #include "../includeForTest.hpp"
-template <std::size_t N> struct hasInt {};
+template <std::size_t N> struct hasInt {
+    static constexpr std::size_t theN = N;
+};
 
 template <std::size_t... Idx>
 void testCompileTime(std::index_sequence<Idx...>){
     using expander = bool[];
     #ifdef TESTMYVARIANT
-    static_cast<void>(expander{(szLogVar::variant<hasInt<Idx>,hasInt<Idx+1>,hasInt<Idx+2>>{},true)...});
+    szLogVar::visit([](auto... args){}, szLogVar::variant<hasInt<Idx>...>{hasInt<Idx>{}}...);
     #else
-    static_cast<void>(expander{(std::variant<hasInt<Idx>,hasInt<Idx+1>,hasInt<Idx+2>>{},true)...});
+    std::visit([](auto... args){}, std::variant<hasInt<Idx>...>{hasInt<Idx>{}}...);
     #endif
 }
 
 int main(){
-    testCompileTime(std::make_index_sequence<1000>{});
+    testCompileTime(std::make_index_sequence<5>{});
 }

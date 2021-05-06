@@ -27,6 +27,9 @@ struct Noisy {
     std::cout << "Noisy move assign\n";
     return *this;
   }
+  #if __has_include(<compare>) && __cplusplus > 201703L
+  friend auto operator<=>(const Noisy&, const Noisy&) = default;
+  #endif
   ~Noisy() { std::cout << "Noisy destructor\n"; }
 };
 
@@ -80,6 +83,9 @@ void testSwap() {
 struct hasInitList {
   std::size_t successConstruct = 123;
   template <class T> constexpr hasInitList(std::initializer_list<T>) {}
+  #if __has_include(<compare>) && __cplusplus > 201703L
+  friend auto operator<=>(const hasInitList&, const hasInitList&) = default;
+  #endif
 };
 
 void testEmplace() {
@@ -159,6 +165,10 @@ struct testCopyAssign {
   testCopyAssign(testCopyAssign &&) = default;
   testCopyAssign &operator=(const testCopyAssign &) = default;
   testCopyAssign &operator=(testCopyAssign &&) { return *this; }
+
+  #if __has_include(<compare>) && __cplusplus > 201703L
+  friend auto operator<=>(const testCopyAssign&, const testCopyAssign&) = default;
+  #endif
 };
 
 void testHash() {
@@ -179,8 +189,13 @@ void testHash() {
   std::cout << szLogVar::get<0>(szLogVar::variant<std::string>("Test "))
             << szLogVar::get<std::string>(copyOfTheString);
 }
+
+struct Empty{};
+
+
 //Want to see the output to ensure everything's working correctly
 int main() {
+  
   static_cast<void>(
       szLogVar::variant<std::string, std::string, std::string, std::string,
                         std::string, std::string, std::string, std::string>{});
